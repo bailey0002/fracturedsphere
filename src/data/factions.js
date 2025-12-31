@@ -7,7 +7,7 @@ export const FACTIONS = {
     description: 'Preservers of the old order. They believe stability comes through tradition.',
     color: '#4a7c9b',
     secondaryColor: '#3a6c8b',
-    emblem: 'â—‡',
+    emblem: '[C]',
     personality: 'defensive',
     priorities: ['defense', 'economy', 'expansion'],
     aiTraits: {
@@ -30,7 +30,7 @@ export const FACTIONS = {
     description: 'Ambitious expansionists. They believe humanity must evolve or die.',
     color: '#c4a35a',
     secondaryColor: '#b4934a',
-    emblem: 'â–³',
+    emblem: '[A]',
     personality: 'aggressive',
     priorities: ['expansion', 'military', 'economy'],
     aiTraits: {
@@ -53,7 +53,7 @@ export const FACTIONS = {
     description: 'United through shared consciousness. They seek harmony through connection.',
     color: '#9b4a4a',
     secondaryColor: '#8b3a3a',
-    emblem: 'â—‹',
+    emblem: '[O]',
     personality: 'balanced',
     priorities: ['economy', 'defense', 'expansion'],
     aiTraits: {
@@ -66,8 +66,8 @@ export const FACTIONS = {
       productionBonus: 0.2,
       supplyBonus: 0.15,
     },
-    startingUnits: ['infantry', 'infantry', 'worker'],
-    lore: 'The Collective emerged from the Sphere\'s networked habitats. Their neural links create unprecedented coordinationâ€”some call it unity, others call it loss of self.',
+    startingUnits: ['infantry', 'infantry', 'garrison'],
+    lore: 'The Collective emerged from the Sphere\'s networked habitats. Their neural links create unprecedented coordination - some call it unity, others call it loss of self.',
   },
   
   reclaimers: {
@@ -76,7 +76,7 @@ export const FACTIONS = {
     description: 'Scavengers and survivors. They thrive in the broken places.',
     color: '#4a9b6b',
     secondaryColor: '#3a8b5b',
-    emblem: 'â—ˆ',
+    emblem: '[R]',
     personality: 'opportunistic',
     priorities: ['economy', 'expansion', 'military'],
     aiTraits: {
