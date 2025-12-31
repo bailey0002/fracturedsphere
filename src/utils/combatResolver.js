@@ -105,10 +105,10 @@ export function calculateDoctrineAdvantage(attackerDoctrine, defenderDoctrine) {
 /**
  * Preview combat outcome without applying it
  */
-export function previewCombat(attacker, defender, attackerDoctrine, defenderDoctrine, terrain) {
+export function previewCombat(attacker, defender, attackerDoctrine, defenderDoctrine, terrain, hexBuildings = []) {
   // Calculate effective strengths
-  const attackerStrength = calculateUnitStrength(attacker, attackerDoctrine, terrain, true)
-  const defenderStrength = calculateUnitStrength(defender, defenderDoctrine, terrain, false)
+  const attackerStrength = calculateUnitStrength(attacker, attackerDoctrine, terrain, true, [])
+  const defenderStrength = calculateUnitStrength(defender, defenderDoctrine, terrain, false, hexBuildings)
   
   // Calculate doctrine advantage
   const doctrineAdvantage = calculateDoctrineAdvantage(attackerDoctrine, defenderDoctrine)
@@ -203,7 +203,7 @@ export function resolveCombat(preview, randomFactor = null) {
   // Use provided random or generate one
   const random = randomFactor !== null ? randomFactor : Math.random()
   
-  // Add some variance to damage (Â±20%)
+  // Add some variance to damage (+/- 20%)
   const attackerVariance = 0.8 + (random * 0.4)
   const defenderVariance = 0.8 + ((1 - random) * 0.4)
   
