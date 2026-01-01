@@ -2,63 +2,85 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 
-// Ambient music URL - using a free atmospheric track
-// Replace with your own hosted audio file for production
-const AMBIENT_MUSIC_URL = 'https://cdn.pixabay.com/audio/2022/10/25/audio_052b24f8e6.mp3'
+// Free ambient music - dark atmospheric sci-fi
+// Using a reliable CDN source
+const AMBIENT_MUSIC_URL = 'https://cdn.pixabay.com/download/audio/2022/01/18/audio_d0c6ff1bab.mp3'
 
 export function useAudio() {
   const audioRef = useRef(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [isInitialized, setIsInitialized] = useState(false)
   const [isMuted, setIsMuted] = useState(() => {
-    // Check localStorage for saved preference
-    const saved = localStorage.getItem('fracturedSphere_audioMuted')
-    return saved === 'true'
+    try {
+      const saved = localStorage.getItem('fracturedSphere_audioMuted')
+      return saved === 'true'
+    } catch {
+      return false
+    }
   })
 
-  // Initialize audio on first user interaction
   const initializeAudio = useCallback(() => {
     if (audioRef.current) return audioRef.current
 
     const audio = new Audio(AMBIENT_MUSIC_URL)
     audio.loop = true
-    audio.volume = 0.3
+    audio.volume = 0.25
     audio.muted = isMuted
+    audio.crossOrigin = 'anonymous'
     audioRef.current = audio
 
-    // Handle audio loading errors gracefully
     audio.addEventListener('error', (e) => {
-      console.warn('Audio failed to load:', e)
+      console.warn('Audio failed to load:', e.target.error)
+    })
+
+    audio.addEventListener('canplaythrough', () => {
+      console.log('Audio loaded and ready')
     })
 
     setIsInitialized(true)
     return audio
   }, [isMuted])
 
-  // Start playing music (called on "Begin Campaign" click)
   const startMusic = useCallback(() => {
     const audio = initializeAudio()
     if (audio && !isPlaying) {
-      audio.play()
-        .then(() => {
-          setIsPlaying(true)
-        })
-        .catch((e) => {
-          console.warn('Audio autoplay blocked:', e)
-        })
+      // Small delay helps with mobile autoplay
+      setTimeout(() => {
+        audio.play()
+          .then(() => {
+            setIsPlaying(true)
+            console.log('Audio playing')
+          })
+          .catch((e) => {
+            console.warn('Audio play failed:', e.message)
+            // Still mark as initialized so speaker button shows
+            setIsPlaying(false)
+          })
+      }, 100)
     }
   }, [initializeAudio, isPlaying])
 
-  // Toggle mute state
   const toggleMute = useCallback(() => {
     const newMuted = !isMuted
     setIsMuted(newMuted)
-    localStorage.setItem('fracturedSphere_audioMuted', String(newMuted))
+    
+    try {
+      localStorage.setItem('fracturedSphere_audioMuted', String(newMuted))
+    } catch {
+      // localStorage might not be available
+    }
     
     if (audioRef.current) {
       audioRef.current.muted = newMuted
+      
+      // If unmuting and not playing, try to play
+      if (!newMuted && !isPlaying) {
+        audioRef.current.play()
+          .then(() => setIsPlaying(true))
+          .catch(() => {})
+      }
     }
-  }, [isMuted])
+  }, [isMuted, isPlaying])
 
   // Cleanup on unmount
   useEffect(() => {
