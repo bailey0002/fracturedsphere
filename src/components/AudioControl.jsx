@@ -18,7 +18,6 @@ export default function AudioControl({ isMuted, onToggle }) {
       aria-label={isMuted ? 'Unmute audio' : 'Mute audio'}
     >
       {isMuted ? (
-        // Muted icon
         <svg 
           xmlns="http://www.w3.org/2000/svg" 
           viewBox="0 0 24 24" 
@@ -34,7 +33,6 @@ export default function AudioControl({ isMuted, onToggle }) {
           <line x1="17" y1="9" x2="23" y2="15" />
         </svg>
       ) : (
-        // Unmuted icon
         <svg 
           xmlns="http://www.w3.org/2000/svg" 
           viewBox="0 0 24 24" 
