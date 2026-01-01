@@ -11,10 +11,10 @@ const PHASE_LABELS = {
 }
 
 const PHASE_ICONS = {
-  [PHASES.PRODUCTION]: 'âš™',
-  [PHASES.DIPLOMACY]: 'ðŸ¤',
-  [PHASES.MOVEMENT]: 'â†’',
-  [PHASES.COMBAT]: 'âš”',
+  [PHASES.PRODUCTION]: '⚙',
+  [PHASES.DIPLOMACY]: '🤝',
+  [PHASES.MOVEMENT]: '→',
+  [PHASES.COMBAT]: '⚔',
 }
 
 export default function TurnBar({ 

@@ -3,11 +3,22 @@
 import { TERRAIN_TYPES, BUILDINGS } from '../data/terrain'
 import { FACTIONS } from '../data/factions'
 import { UNITS, VETERANCY_LEVELS, getBranchColor } from '../data/units'
+import { 
+  getFactionImage, 
+  getTerrainImage, 
+  getBuildingImage, 
+  getResourceImage,
+  getBranchImage,
+  getVeterancyImage 
+} from '../assets'
 
 function UnitCard({ unit }) {
   const unitDef = UNITS[unit.type]
   const factionData = FACTIONS[unit.owner]
   const vetLevel = VETERANCY_LEVELS[unit.veterancy.toUpperCase()] || VETERANCY_LEVELS.GREEN
+  const factionImage = getFactionImage(unit.owner)
+  const branchImage = getBranchImage(unitDef?.branch)
+  const vetImage = getVeterancyImage(unit.veterancy)
   
   if (!unitDef) return null
   
@@ -17,15 +28,24 @@ function UnitCard({ unit }) {
       style={{ borderLeftColor: factionData?.color, borderLeftWidth: 3 }}
     >
       <div className="flex items-center justify-between mb-1">
-        <span className="font-display text-xs text-steel-bright">
-          {unitDef.name}
-        </span>
-        <span 
-          className="text-xs"
-          style={{ color: getBranchColor(unitDef.branch) }}
-        >
-          {unitDef.branch}
-        </span>
+        <div className="flex items-center gap-2">
+          {factionImage && (
+            <img src={factionImage} alt="" className="w-5 h-5 object-contain" />
+          )}
+          <span className="font-display text-xs text-steel-bright">
+            {unitDef.name}
+          </span>
+        </div>
+        {branchImage ? (
+          <img src={branchImage} alt={unitDef.branch} className="w-5 h-5 object-contain" />
+        ) : (
+          <span 
+            className="text-xs"
+            style={{ color: getBranchColor(unitDef.branch) }}
+          >
+            {unitDef.branch}
+          </span>
+        )}
       </div>
       
       <div className="flex items-center gap-3 text-[10px] font-mono text-steel-light">
@@ -35,9 +55,14 @@ function UnitCard({ unit }) {
       </div>
       
       <div className="flex items-center justify-between mt-1">
-        <span className="text-[10px] text-steel-light/60">
-          {vetLevel.icon} {vetLevel.name}
-        </span>
+        <div className="flex items-center gap-1">
+          {vetImage ? (
+            <img src={vetImage} alt={vetLevel.name} className="w-4 h-4 object-contain" />
+          ) : (
+            <span className="text-[10px]">{vetLevel.icon}</span>
+          )}
+          <span className="text-[10px] text-steel-light/60">{vetLevel.name}</span>
+        </div>
         <span className="text-[10px] text-steel-light/60">
           HP: {unit.health}%
         </span>
@@ -72,6 +97,8 @@ export default function HexInfoPanel({ hex, units, onClose }) {
   
   const terrain = TERRAIN_TYPES[hex.terrain] || TERRAIN_TYPES.plains
   const owner = hex.owner ? FACTIONS[hex.owner] : null
+  const terrainImage = getTerrainImage(hex.terrain)
+  const ownerImage = owner ? getFactionImage(hex.owner) : null
   
   return (
     <div className="panel h-full overflow-y-auto">
@@ -85,7 +112,7 @@ export default function HexInfoPanel({ hex, units, onClose }) {
             onClick={onClose}
             className="text-steel-light/50 hover:text-steel-bright"
           >
-            âœ•
+            ✕
           </button>
         )}
       </div>
@@ -96,10 +123,18 @@ export default function HexInfoPanel({ hex, units, onClose }) {
           Terrain
         </div>
         <div className="flex items-center gap-2">
-          <div 
-            className="w-4 h-4 rounded"
-            style={{ backgroundColor: terrain.color }}
-          />
+          {terrainImage ? (
+            <img 
+              src={terrainImage} 
+              alt={terrain.name}
+              className="w-10 h-10 rounded object-cover"
+            />
+          ) : (
+            <div 
+              className="w-4 h-4 rounded"
+              style={{ backgroundColor: terrain.color }}
+            />
+          )}
           <span className="font-display text-steel-bright">
             {terrain.name}
           </span>
@@ -116,15 +151,19 @@ export default function HexInfoPanel({ hex, units, onClose }) {
         </div>
         {owner ? (
           <div className="flex items-center gap-2">
-            <div 
-              className="w-3 h-3 rounded-full"
-              style={{ backgroundColor: owner.color }}
-            />
+            {ownerImage ? (
+              <img src={ownerImage} alt="" className="w-6 h-6 object-contain" />
+            ) : (
+              <div 
+                className="w-3 h-3 rounded-full"
+                style={{ backgroundColor: owner.color }}
+              />
+            )}
             <span style={{ color: owner.color }} className="font-display">
               {owner.name}
             </span>
             {hex.isCapital && (
-              <span className="text-warning text-xs">â˜… Capital</span>
+              <span className="text-warning text-xs">★ Capital</span>
             )}
           </div>
         ) : (
@@ -162,13 +201,34 @@ export default function HexInfoPanel({ hex, units, onClose }) {
         </div>
         <div className="flex gap-4 text-xs font-mono">
           {hex.resources.gold > 0 && (
-            <span className="text-ascendant">â—ˆ {hex.resources.gold}</span>
+            <div className="flex items-center gap-1">
+              {getResourceImage('gold') ? (
+                <img src={getResourceImage('gold')} alt="gold" className="w-4 h-4 object-contain" />
+              ) : (
+                <span className="text-ascendant">●</span>
+              )}
+              <span className="text-ascendant">{hex.resources.gold}</span>
+            </div>
           )}
           {hex.resources.iron > 0 && (
-            <span className="text-steel-light">â¬¡ {hex.resources.iron}</span>
+            <div className="flex items-center gap-1">
+              {getResourceImage('iron') ? (
+                <img src={getResourceImage('iron')} alt="iron" className="w-4 h-4 object-contain" />
+              ) : (
+                <span className="text-steel-light">◆</span>
+              )}
+              <span className="text-steel-light">{hex.resources.iron}</span>
+            </div>
           )}
           {hex.resources.grain > 0 && (
-            <span className="text-reclaimers">â‹ {hex.resources.grain}</span>
+            <div className="flex items-center gap-1">
+              {getResourceImage('grain') ? (
+                <img src={getResourceImage('grain')} alt="grain" className="w-4 h-4 object-contain" />
+              ) : (
+                <span className="text-reclaimers">▲</span>
+              )}
+              <span className="text-reclaimers">{hex.resources.grain}</span>
+            </div>
           )}
         </div>
       </div>
@@ -182,13 +242,19 @@ export default function HexInfoPanel({ hex, units, onClose }) {
           <div className="space-y-1">
             {hex.buildings.map((buildingId, idx) => {
               const building = BUILDINGS[buildingId]
+              const buildingImage = getBuildingImage(buildingId)
               if (!building) return null
               return (
                 <div 
                   key={idx}
                   className="flex items-center justify-between p-2 bg-steel/20 rounded border border-steel-light/10"
                 >
-                  <span className="text-xs text-steel-bright">{building.name}</span>
+                  <div className="flex items-center gap-2">
+                    {buildingImage && (
+                      <img src={buildingImage} alt="" className="w-6 h-6 object-contain" />
+                    )}
+                    <span className="text-xs text-steel-bright">{building.name}</span>
+                  </div>
                   {building.production && Object.keys(building.production).length > 0 && (
                     <span className="text-[10px] text-success">
                       +{Object.entries(building.production).map(([r, a]) => `${a} ${r}`).join(', ')}

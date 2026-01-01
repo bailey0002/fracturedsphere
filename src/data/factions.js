@@ -7,7 +7,7 @@ export const FACTIONS = {
     description: 'Preservers of the old order. They believe stability comes through tradition.',
     color: '#4a7c9b',
     secondaryColor: '#3a6c8b',
-    emblem: '[C]',
+    emblem: '◆',
     personality: 'defensive',
     priorities: ['defense', 'economy', 'expansion'],
     aiTraits: {
@@ -30,7 +30,7 @@ export const FACTIONS = {
     description: 'Ambitious expansionists. They believe humanity must evolve or die.',
     color: '#c4a35a',
     secondaryColor: '#b4934a',
-    emblem: '[A]',
+    emblem: '▲',
     personality: 'aggressive',
     priorities: ['expansion', 'military', 'economy'],
     aiTraits: {
@@ -53,7 +53,7 @@ export const FACTIONS = {
     description: 'United through shared consciousness. They seek harmony through connection.',
     color: '#9b4a4a',
     secondaryColor: '#8b3a3a',
-    emblem: '[O]',
+    emblem: '○',
     personality: 'balanced',
     priorities: ['economy', 'defense', 'expansion'],
     aiTraits: {
@@ -76,7 +76,7 @@ export const FACTIONS = {
     description: 'Scavengers and survivors. They thrive in the broken places.',
     color: '#4a9b6b',
     secondaryColor: '#3a8b5b',
-    emblem: '[R]',
+    emblem: '◇',
     personality: 'opportunistic',
     priorities: ['economy', 'expansion', 'military'],
     aiTraits: {

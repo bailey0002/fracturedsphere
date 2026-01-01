@@ -4,6 +4,7 @@ import { useMemo } from 'react'
 import { UNITS, UNIT_BRANCHES, getBranchColor } from '../data/units'
 import { BUILDINGS } from '../data/terrain'
 import { getResourceColor } from '../data/terrain'
+import { getBranchImage, getResourceImage } from '../assets'
 
 export default function TrainMenu({ 
   hex, 
@@ -89,12 +90,16 @@ export default function TrainMenu({
           </div>
           {queuedHere.map((q, i) => {
             const u = UNITS[q.unitType]
+            const branchImage = getBranchImage(u?.branch)
             return (
               <div 
                 key={i}
                 className="flex items-center justify-between p-2 bg-primary/10 border border-primary/30 rounded mb-1"
               >
-                <span className="text-sm text-primary">{u?.name || q.unitType}</span>
+                <span className="text-sm text-primary flex items-center gap-2">
+                  {branchImage && <img src={branchImage} alt="" className="w-5 h-5 object-contain" />}
+                  {u?.name || q.unitType}
+                </span>
                 <span className="text-xs text-steel-light/70">
                   {q.turnsRemaining} turn{q.turnsRemaining !== 1 ? 's' : ''} left
                 </span>
@@ -105,27 +110,34 @@ export default function TrainMenu({
       )}
       
       {/* Units by branch */}
-      {Object.entries(unitsByBranch).map(([branch, units]) => (
-        <div key={branch} className="mb-4">
-          <div 
-            className="text-xs uppercase tracking-wider mb-2 flex items-center gap-2"
-            style={{ color: getBranchColor(branch) }}
-          >
-            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: getBranchColor(branch) }} />
-            {branch}
+      {Object.entries(unitsByBranch).map(([branch, units]) => {
+        const branchImage = getBranchImage(branch)
+        return (
+          <div key={branch} className="mb-4">
+            <div 
+              className="text-xs uppercase tracking-wider mb-2 flex items-center gap-2"
+              style={{ color: getBranchColor(branch) }}
+            >
+              {branchImage ? (
+                <img src={branchImage} alt={branch} className="w-5 h-5 object-contain" />
+              ) : (
+                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: getBranchColor(branch) }} />
+              )}
+              {branch}
+            </div>
+            
+            <div className="space-y-2">
+              {units.map(unit => (
+                <UnitOption
+                  key={unit.id}
+                  unit={unit}
+                  onTrain={() => onTrain(unit.id)}
+                />
+              ))}
+            </div>
           </div>
-          
-          <div className="space-y-2">
-            {units.map(unit => (
-              <UnitOption
-                key={unit.id}
-                unit={unit}
-                onTrain={() => onTrain(unit.id)}
-              />
-            ))}
-          </div>
-        </div>
-      ))}
+        )
+      })}
       
       {trainableCount === 0 && (
         <div className="text-sm text-steel-light/50 italic text-center py-4">
@@ -144,6 +156,7 @@ export default function TrainMenu({
 // Individual unit option
 function UnitOption({ unit, onTrain }) {
   const disabled = !unit.available
+  const branchImage = getBranchImage(unit.branch)
   
   return (
     <div 
@@ -158,9 +171,14 @@ function UnitOption({ unit, onTrain }) {
     >
       {/* Name and train time */}
       <div className="flex items-center justify-between mb-1">
-        <span className={`font-display text-sm ${disabled ? 'text-steel-light/50' : 'text-steel-bright group-hover:text-primary'} transition-colors`}>
-          {unit.name}
-        </span>
+        <div className="flex items-center gap-2">
+          {branchImage && (
+            <img src={branchImage} alt={unit.branch} className="w-6 h-6 object-contain" />
+          )}
+          <span className={`font-display text-sm ${disabled ? 'text-steel-light/50' : 'text-steel-bright group-hover:text-primary'} transition-colors`}>
+            {unit.name}
+          </span>
+        </div>
         <span className="text-xs text-steel-light/50">
           {unit.trainTime} turn{unit.trainTime !== 1 ? 's' : ''}
         </span>
@@ -204,6 +222,7 @@ function UnitOption({ unit, onTrain }) {
 // Resource cost display
 function ResourceCost({ resource, amount }) {
   const color = getResourceColor(resource)
+  const image = getResourceImage(resource)
   const icons = {
     gold: '●',
     iron: '◆',
@@ -216,7 +235,11 @@ function ResourceCost({ resource, amount }) {
       className="text-xs font-mono flex items-center gap-1"
       style={{ color }}
     >
-      <span>{icons[resource] || '•'}</span>
+      {image ? (
+        <img src={image} alt={resource} className="w-4 h-4 object-contain" />
+      ) : (
+        <span>{icons[resource] || '•'}</span>
+      )}
       {amount}
     </span>
   )

@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react'
 import { BUILDINGS, TERRAIN_TYPES, canBuildOnTerrain, getResourceColor } from '../data/terrain'
+import { getBuildingImage, getResourceImage } from '../assets'
 
 export default function BuildMenu({ 
   hex, 
@@ -90,11 +91,13 @@ export default function BuildMenu({
           <div className="flex flex-wrap gap-2">
             {existingBuildings.map(bId => {
               const b = BUILDINGS[bId]
+              const bImage = getBuildingImage(bId)
               return (
                 <span 
                   key={bId}
-                  className="px-2 py-1 bg-steel/30 rounded text-xs text-steel-bright"
+                  className="px-2 py-1 bg-steel/30 rounded text-xs text-steel-bright flex items-center gap-1"
                 >
+                  {bImage && <img src={bImage} alt="" className="w-4 h-4 object-contain" />}
                   {b?.name || bId}
                 </span>
               )
@@ -111,12 +114,16 @@ export default function BuildMenu({
           </div>
           {queuedHere.map((q, i) => {
             const b = BUILDINGS[q.buildingType]
+            const bImage = getBuildingImage(q.buildingType)
             return (
               <div 
                 key={i}
                 className="flex items-center justify-between p-2 bg-warning/10 border border-warning/30 rounded mb-1"
               >
-                <span className="text-sm text-warning">{b?.name || q.buildingType}</span>
+                <span className="text-sm text-warning flex items-center gap-2">
+                  {bImage && <img src={bImage} alt="" className="w-5 h-5 object-contain" />}
+                  {b?.name || q.buildingType}
+                </span>
                 <span className="text-xs text-steel-light/70">
                   {q.turnsRemaining} turn{q.turnsRemaining !== 1 ? 's' : ''} left
                 </span>
@@ -153,15 +160,21 @@ export default function BuildMenu({
             {unavailable.length} structure{unavailable.length !== 1 ? 's' : ''} unavailable
           </summary>
           <div className="mt-2 space-y-1">
-            {unavailable.map(building => (
-              <div 
-                key={building.id}
-                className="flex items-center justify-between p-2 bg-steel/10 rounded opacity-50"
-              >
-                <span className="text-xs text-steel-light">{building.name}</span>
-                <span className="text-xs text-steel-light/50">{building.reason}</span>
-              </div>
-            ))}
+            {unavailable.map(building => {
+              const bImage = getBuildingImage(building.id)
+              return (
+                <div 
+                  key={building.id}
+                  className="flex items-center justify-between p-2 bg-steel/10 rounded opacity-50"
+                >
+                  <span className="text-xs text-steel-light flex items-center gap-2">
+                    {bImage && <img src={bImage} alt="" className="w-4 h-4 object-contain opacity-50" />}
+                    {building.name}
+                  </span>
+                  <span className="text-xs text-steel-light/50">{building.reason}</span>
+                </div>
+              )
+            })}
           </div>
         </details>
       )}
@@ -171,6 +184,8 @@ export default function BuildMenu({
 
 // Individual building option
 function BuildingOption({ building, onBuild }) {
+  const buildingImage = getBuildingImage(building.id)
+  
   return (
     <div 
       className="group p-3 bg-steel/20 hover:bg-steel/30 border border-steel-light/10 
@@ -179,9 +194,14 @@ function BuildingOption({ building, onBuild }) {
     >
       {/* Name and build time */}
       <div className="flex items-center justify-between mb-2">
-        <span className="font-display text-sm text-steel-bright group-hover:text-primary transition-colors">
-          {building.name}
-        </span>
+        <div className="flex items-center gap-2">
+          {buildingImage && (
+            <img src={buildingImage} alt="" className="w-8 h-8 object-contain drop-shadow-md" />
+          )}
+          <span className="font-display text-sm text-steel-bright group-hover:text-primary transition-colors">
+            {building.name}
+          </span>
+        </div>
         <span className="text-xs text-steel-light/50">
           {building.buildTime} turn{building.buildTime !== 1 ? 's' : ''}
         </span>
@@ -207,12 +227,15 @@ function BuildingOption({ building, onBuild }) {
             {Object.entries(building.production || {}).map(([resource, amount]) => (
               <span 
                 key={resource}
-                className="text-xs px-1.5 py-0.5 rounded"
+                className="text-xs px-1.5 py-0.5 rounded flex items-center gap-1"
                 style={{ 
                   backgroundColor: `${getResourceColor(resource)}20`,
                   color: getResourceColor(resource)
                 }}
               >
+                {getResourceImage(resource) && (
+                  <img src={getResourceImage(resource)} alt="" className="w-3 h-3 object-contain" />
+                )}
                 +{amount} {resource}/turn
               </span>
             ))}
@@ -234,6 +257,7 @@ function BuildingOption({ building, onBuild }) {
 // Resource cost display
 function ResourceCost({ resource, amount }) {
   const color = getResourceColor(resource)
+  const image = getResourceImage(resource)
   const icons = {
     gold: '●',
     iron: '◆',
@@ -246,7 +270,11 @@ function ResourceCost({ resource, amount }) {
       className="text-xs font-mono flex items-center gap-1"
       style={{ color }}
     >
-      <span>{icons[resource] || '•'}</span>
+      {image ? (
+        <img src={image} alt={resource} className="w-4 h-4 object-contain" />
+      ) : (
+        <span>{icons[resource] || '•'}</span>
+      )}
       {amount}
     </span>
   )

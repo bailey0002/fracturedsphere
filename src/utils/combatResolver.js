@@ -203,7 +203,7 @@ export function resolveCombat(preview, randomFactor = null) {
   // Use provided random or generate one
   const random = randomFactor !== null ? randomFactor : Math.random()
   
-  // Add some variance to damage (+/- 20%)
+  // Add some variance to damage (Â±20%)
   const attackerVariance = 0.8 + (random * 0.4)
   const defenderVariance = 0.8 + ((1 - random) * 0.4)
   

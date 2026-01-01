@@ -146,11 +146,12 @@ function findBestTarget(unit, validAttacks, state, faction) {
     
     const targetHex = mapData[hexId(target.q, target.r)]
     const terrain = targetHex?.terrain || 'plains'
+    const hexBuildings = targetHex?.buildings || []
     
     // Preview combat
     const attackerDoc = getRecommendedDoctrine(unit, target, terrain, true)
     const defenderDoc = getRecommendedDoctrine(target, unit, terrain, false)
-    const preview = previewCombat(unit, target, attackerDoc, defenderDoc, terrain)
+    const preview = previewCombat(unit, target, attackerDoc, defenderDoc, terrain, hexBuildings)
     
     let score = 0
     
@@ -247,8 +248,13 @@ export function useAI(state, dispatch) {
         if (bestAttack && !unit.attackedThisTurn) {
           // Attack - resolve immediately for AI
           const combatResult = resolveCombat(bestAttack.preview)
+          const target = state.units.find(u => u.id === bestAttack.attack.targetId)
+          
+          // Use AI_RESOLVE_COMBAT which includes attacker/defender info directly
           dispatch({
-            type: 'RESOLVE_COMBAT',
+            type: 'AI_RESOLVE_COMBAT',
+            attackerId: unit.id,
+            defenderId: bestAttack.attack.targetId,
             result: {
               attackerHealth: combatResult.attacker.newHealth,
               defenderHealth: combatResult.defender.newHealth,
@@ -256,6 +262,7 @@ export function useAI(state, dispatch) {
               defenderDestroyed: combatResult.defender.destroyed,
               attackerXPGain: combatResult.attacker.expGain || 5,
               defenderXPGain: combatResult.defender.expGain || 5,
+              hexCaptured: combatResult.hexCaptured,
             }
           })
           actionIndex++
@@ -378,12 +385,16 @@ function calculateValidMovesForAI(state, unit) {
 function calculateValidAttacksForAI(state, unit) {
   if (!unit || unit.attackedThisTurn) return []
   
-  const { units } = state
+  const { units, relations } = state
   const range = unit.stats.range || 1
   const validAttacks = []
   
   units.forEach(target => {
     if (target.owner === unit.owner) return
+    
+    // Check relations - can't attack allied factions
+    const relation = relations[unit.owner]?.[target.owner] || 'neutral'
+    if (relation === 'allied') return
     
     const dist = hexDistance(unit.q, unit.r, target.q, target.r)
     if (dist <= range) {

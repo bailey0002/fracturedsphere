@@ -103,7 +103,7 @@ function HexTile({
           fill="#fff"
           style={{ pointerEvents: 'none' }}
         >
-          â˜…
+          ★
         </text>
       )}
       

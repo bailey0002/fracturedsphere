@@ -1,6 +1,6 @@
 // Diplomacy panel for managing faction relations
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { FACTIONS, RELATIONS, DIPLOMATIC_ACTIONS, getRelationColor, getRelationLabel } from '../data/factions'
 import { getResourceColor } from '../data/terrain'
 
@@ -10,11 +10,28 @@ export default function DiplomacyPanel({
   playerFaction,
   relations,
   playerResources,
+  lastDiplomaticResult,
   onDiplomaticAction,
   onClose
 }) {
   const [selectedFaction, setSelectedFaction] = useState(null)
   const [actionResult, setActionResult] = useState(null)
+  
+  // Update actionResult when lastDiplomaticResult changes
+  useEffect(() => {
+    if (lastDiplomaticResult) {
+      const action = DIPLOMATIC_ACTIONS[lastDiplomaticResult.action]
+      setActionResult({
+        success: lastDiplomaticResult.success,
+        message: lastDiplomaticResult.success 
+          ? `${action?.name || lastDiplomaticResult.action} successful!`
+          : `${action?.name || lastDiplomaticResult.action} was rejected.`
+      })
+      // Clear after a delay
+      const timeout = setTimeout(() => setActionResult(null), 3000)
+      return () => clearTimeout(timeout)
+    }
+  }, [lastDiplomaticResult])
   
   // Get all other factions
   const otherFactions = useMemo(() => {
@@ -78,14 +95,12 @@ export default function DiplomacyPanel({
     const action = DIPLOMATIC_ACTIONS[actionKey]
     if (!action || !selectedFaction) return
     
-    // Execute the action
-    const result = onDiplomaticAction(selectedFaction, actionKey)
-    
-    // Show result feedback
-    setActionResult(result)
-    setTimeout(() => setActionResult(null), 3000)
+    // Execute the action - result will come from state
+    onDiplomaticAction(selectedFaction, actionKey)
   }
   
+  // Watch for diplomatic result from state (passed via props or context)
+  // For now, we'll read it from the relations change
   const selectedFactionData = selectedFaction ? FACTIONS[selectedFaction] : null
   const currentRelation = selectedFaction ? (relations[playerFaction]?.[selectedFaction] || 'neutral') : null
   

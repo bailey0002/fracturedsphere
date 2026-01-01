@@ -14,6 +14,7 @@ export default {
         },
         // Steel/metal UI
         steel: {
+          darker: '#151520',
           dark: '#1a1a24',
           DEFAULT: '#2a2a3a',
           light: '#8a9baa',
@@ -25,6 +26,8 @@ export default {
         collective: '#9b4a4a',
         reclaimers: '#4a9b6b',
         // Accent colors
+        primary: '#4a9bbb',
+        accent: '#9b7bd9',
         warning: '#c4a855',
         danger: '#c45555',
         success: '#55a870',

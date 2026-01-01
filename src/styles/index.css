@@ -28,6 +28,11 @@ body {
   overflow: hidden;
 }
 
+/* iOS scroll fix */
+.-webkit-overflow-scrolling-touch {
+  -webkit-overflow-scrolling: touch;
+}
+
 /* Atmospheric background */
 body::before {
   content: '';

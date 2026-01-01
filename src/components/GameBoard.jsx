@@ -236,6 +236,7 @@ export default function GameBoard({ state, actions, dispatch }) {
           attacker={pendingCombat.attacker}
           defender={pendingCombat.defender}
           terrain={pendingCombat.terrain}
+          hexBuildings={pendingCombat.hexBuildings}
           playerFaction={playerFaction}
           onResolve={handleCombatResolve}
           onCancel={actions.cancelCombat}
@@ -248,6 +249,7 @@ export default function GameBoard({ state, actions, dispatch }) {
           playerFaction={playerFaction}
           relations={relations}
           playerResources={resources}
+          lastDiplomaticResult={state.lastDiplomaticResult}
           onDiplomaticAction={actions.performDiplomaticAction}
           onClose={() => setShowDiplomacy(false)}
         />

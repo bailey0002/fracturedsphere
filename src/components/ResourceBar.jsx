@@ -1,6 +1,7 @@
 // Resource display bar
 
 import { getResourceColor } from '../data/terrain'
+import { getResourceImage } from '../assets'
 
 const RESOURCE_ICONS = {
   gold: '◈',
@@ -12,10 +13,19 @@ const RESOURCE_ICONS = {
 function ResourceDisplay({ resource, amount }) {
   const color = getResourceColor(resource)
   const icon = RESOURCE_ICONS[resource] || '●'
+  const image = getResourceImage(resource)
   
   return (
     <div className="flex items-center gap-2">
-      <span style={{ color }} className="text-lg">{icon}</span>
+      {image ? (
+        <img 
+          src={image} 
+          alt={resource}
+          className="w-7 h-7 object-contain drop-shadow-md"
+        />
+      ) : (
+        <span style={{ color }} className="text-lg">{icon}</span>
+      )}
       <div>
         <div className="font-mono text-sm text-steel-bright">
           {Math.floor(amount)}

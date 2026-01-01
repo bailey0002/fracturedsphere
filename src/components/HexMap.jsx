@@ -202,7 +202,7 @@ export default function HexMap({
       
       {/* Map controls hint */}
       <div className="absolute bottom-4 left-4 text-xs text-steel-light/50 font-mono">
-        Scroll to zoom â€¢ Right-drag to pan
+        Scroll to zoom • Right-drag to pan
       </div>
     </div>
   )

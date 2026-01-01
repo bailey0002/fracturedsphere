@@ -23,13 +23,13 @@ function TitleScreen({ onStart }) {
         <div className="w-full h-1 bg-steel-light/5 animate-scan-line" />
       </div>
       
-      <div className="relative z-10 text-center max-w-full overflow-hidden">
+      <div className="relative z-10 text-center">
         {/* Logo/Title */}
         <div className="mb-8 sm:mb-12">
-          <h1 className="font-display text-xl sm:text-4xl md:text-5xl lg:text-7xl tracking-[0.05em] sm:tracking-[0.3em] md:tracking-[0.4em] text-steel-bright mb-2 sm:mb-4 animate-fade-in">
+          <h1 className="font-display text-2xl sm:text-4xl md:text-5xl lg:text-7xl tracking-[0.15em] sm:tracking-[0.3em] md:tracking-[0.4em] text-steel-bright mb-2 sm:mb-4 animate-fade-in">
             THE FRACTURED
           </h1>
-          <h1 className="font-display text-xl sm:text-4xl md:text-5xl lg:text-7xl tracking-[0.05em] sm:tracking-[0.3em] md:tracking-[0.4em] text-continuity animate-fade-in" style={{ animationDelay: '0.2s' }}>
+          <h1 className="font-display text-2xl sm:text-4xl md:text-5xl lg:text-7xl tracking-[0.15em] sm:tracking-[0.3em] md:tracking-[0.4em] text-continuity animate-fade-in" style={{ animationDelay: '0.2s' }}>
             SPHERE
           </h1>
         </div>

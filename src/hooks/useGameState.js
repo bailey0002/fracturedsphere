@@ -619,6 +619,7 @@ function gameReducer(state, action) {
           attacker,
           defender,
           terrain: defenderHex?.terrain || 'plains',
+          hexBuildings: defenderHex?.buildings || [],
         },
       }
     }
@@ -699,6 +700,74 @@ function gameReducer(state, action) {
       return {
         ...state,
         pendingCombat: null,
+      }
+    }
+    
+    case 'AI_RESOLVE_COMBAT': {
+      // AI combat resolution that doesn't rely on pendingCombat
+      const { attackerId, defenderId, result } = action
+      const attacker = state.units.find(u => u.id === attackerId)
+      const defender = state.units.find(u => u.id === defenderId)
+      
+      if (!attacker || !defender) return state
+      
+      let updatedUnits = state.units.map(u => {
+        if (u.id === attackerId) {
+          if (result.attackerDestroyed) return null
+          return {
+            ...u,
+            health: result.attackerHealth,
+            experience: (u.experience || 0) + (result.attackerXPGain || 5),
+            attackedThisTurn: true,
+          }
+        }
+        if (u.id === defenderId) {
+          if (result.defenderDestroyed) return null
+          return {
+            ...u,
+            health: result.defenderHealth,
+            experience: (u.experience || 0) + (result.defenderXPGain || 5),
+          }
+        }
+        return u
+      }).filter(Boolean)
+      
+      // Update veterancy
+      updatedUnits = updatedUnits.map(u => {
+        const xp = u.experience || 0
+        let veterancy = 'green'
+        if (xp >= 200) veterancy = 'legendary'
+        else if (xp >= 100) veterancy = 'elite'
+        else if (xp >= 50) veterancy = 'veteran'
+        else if (xp >= 20) veterancy = 'trained'
+        return { ...u, veterancy }
+      })
+      
+      // Capture hex if defender destroyed
+      let updatedMapData = state.mapData
+      if (result.defenderDestroyed || result.hexCaptured) {
+        const hexKey = hexId(defender.q, defender.r)
+        updatedMapData = {
+          ...state.mapData,
+          [hexKey]: {
+            ...state.mapData[hexKey],
+            owner: attacker.owner,
+          },
+        }
+        
+        // Move attacker to captured hex
+        updatedUnits = updatedUnits.map(u => {
+          if (u.id === attackerId) {
+            return { ...u, q: defender.q, r: defender.r }
+          }
+          return u
+        })
+      }
+      
+      return {
+        ...state,
+        units: updatedUnits,
+        mapData: updatedMapData,
       }
     }
     
@@ -1018,16 +1087,6 @@ export function useGameState() {
       actionKey, 
       playerFaction: state.playerFaction 
     })
-    
-    // Return result for UI feedback
-    const diplomaticAction = DIPLOMATIC_ACTIONS[actionKey]
-    const success = !diplomaticAction.successChance || Math.random() < diplomaticAction.successChance
-    return {
-      success,
-      message: success 
-        ? `${diplomaticAction.name} successful!`
-        : `${diplomaticAction.name} was rejected.`
-    }
   }, [state.playerFaction])
   
   return {
