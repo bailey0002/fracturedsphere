@@ -2,8 +2,10 @@
 
 import { useState, useCallback } from 'react'
 import { useGameState } from './hooks/useGameState'
+import { useAudio } from './hooks/useAudio'
 import FactionSelect from './components/FactionSelect'
 import GameBoard from './components/GameBoard'
+import AudioControl from './components/AudioControl'
 
 // Game screens
 const SCREENS = {
@@ -58,7 +60,7 @@ function TitleScreen({ onStart }) {
         
         {/* Version */}
         <div className="mt-8 sm:mt-12 text-xs font-mono text-steel-light/30 animate-fade-in" style={{ animationDelay: '0.8s' }}>
-          v0.3.0 - Phase 3 Build
+          v0.3.1 - Phase 3 Build
         </div>
       </div>
       
@@ -79,28 +81,43 @@ function TitleScreen({ onStart }) {
 export default function App() {
   const [screen, setScreen] = useState(SCREENS.TITLE)
   const { state, actions, dispatch } = useGameState()
+  const { isInitialized, isMuted, startMusic, toggleMute } = useAudio()
   
   const handleStart = useCallback(() => {
     setScreen(SCREENS.FACTION_SELECT)
   }, [])
   
   const handleSelectFaction = useCallback((factionId) => {
+    // Start music when game begins
+    startMusic()
     actions.startGame(factionId)
     setScreen(SCREENS.GAME)
-  }, [actions])
+  }, [actions, startMusic])
   
   // Render based on current screen
-  switch (screen) {
-    case SCREENS.TITLE:
-      return <TitleScreen onStart={handleStart} />
-    
-    case SCREENS.FACTION_SELECT:
-      return <FactionSelect onSelectFaction={handleSelectFaction} />
-    
-    case SCREENS.GAME:
-      return <GameBoard state={state} actions={actions} dispatch={dispatch} />
-    
-    default:
-      return <TitleScreen onStart={handleStart} />
+  const renderScreen = () => {
+    switch (screen) {
+      case SCREENS.TITLE:
+        return <TitleScreen onStart={handleStart} />
+      
+      case SCREENS.FACTION_SELECT:
+        return <FactionSelect onSelectFaction={handleSelectFaction} />
+      
+      case SCREENS.GAME:
+        return <GameBoard state={state} actions={actions} dispatch={dispatch} />
+      
+      default:
+        return <TitleScreen onStart={handleStart} />
+    }
   }
+  
+  return (
+    <>
+      {renderScreen()}
+      {/* Show audio control once music has been initialized (game started) */}
+      {isInitialized && (
+        <AudioControl isMuted={isMuted} onToggle={toggleMute} />
+      )}
+    </>
+  )
 }
