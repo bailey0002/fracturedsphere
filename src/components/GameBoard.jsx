@@ -34,8 +34,8 @@ export default function GameBoard({ state, actions, dispatch }) {
   } = state
   
   const [aiThinking, setAiThinking] = useState(false)
-  const [showBuildMenu, setShowBuildMenu] = useState(false)
   const [showDiplomacy, setShowDiplomacy] = useState(false)
+  const [mobilePanel, setMobilePanel] = useState(null) // 'info', 'build', 'train', or null
   
   const factionData = FACTIONS[playerFaction]
   const resources = factionResources[playerFaction]
@@ -51,7 +51,14 @@ export default function GameBoard({ state, actions, dispatch }) {
         setAiThinking(false)
       })
     }
-  }, [phase, turn]) // Run when phase changes or new turn starts
+  }, [phase, turn])
+  
+  // Auto-show info panel when hex selected on mobile
+  useEffect(() => {
+    if (selectedHex) {
+      setMobilePanel('info')
+    }
+  }, [selectedHex])
   
   // Get selected hex data
   const selectedHexData = useMemo(() => {
@@ -75,66 +82,61 @@ export default function GameBoard({ state, actions, dispatch }) {
   
   const totalHexes = Object.keys(mapData).length
   
-  // Handle hex clicks - check for attacks
+  const isOwnedHex = selectedHexData?.owner === playerFaction
+  
+  // Handle hex clicks
   const handleHexClick = (q, r) => {
-    // Check if clicking on valid attack target
     const attackTarget = validAttacks.find(a => a.q === q && a.r === r)
     if (attackTarget && selectedUnit) {
       actions.initiateAttack(selectedUnit, attackTarget.targetId)
       return
     }
     
-    // Check if clicking on valid move
     const moveTarget = validMoves.find(m => m.q === q && m.r === r)
     if (moveTarget && selectedUnit) {
       actions.moveUnit(q, r)
       return
     }
     
-    // Default: select hex
     actions.selectHex(q, r)
   }
   
-  // Combat resolution handler
   const handleCombatResolve = (result) => {
     actions.resolveCombat(result)
   }
   
+  const closeMobilePanel = () => {
+    setMobilePanel(null)
+    actions.clearSelection()
+  }
+  
   return (
-    <div className="h-screen flex flex-col bg-void-950">
-      {/* Top bar - Resources and Turn info */}
-      <div className="flex-none p-4 space-y-2">
-        <div className="flex items-center justify-between gap-4">
-          {/* Faction and resources */}
-          <div className="flex items-center gap-4">
-            <div 
-              className="flex items-center gap-2 px-3 py-1 rounded border"
-              style={{ 
-                borderColor: factionData?.color,
-                color: factionData?.color,
-              }}
-            >
-              <span className="text-xl">{factionData?.emblem}</span>
-              <span className="font-display text-sm tracking-wider">
-                {factionData?.name}
-              </span>
-            </div>
-            
-            <ResourceBar 
-              resources={resources} 
-              factionColor={factionData?.color}
-            />
+    <div className="fixed inset-0 flex flex-col bg-void-950">
+      {/* Top bar */}
+      <div className="flex-none p-2 sm:p-4 space-y-2 border-b border-steel-light/10">
+        {/* Row 1: Faction, Territory */}
+        <div className="flex items-center justify-between gap-2">
+          <div 
+            className="flex items-center gap-2 px-2 py-1 rounded border"
+            style={{ borderColor: factionData?.color, color: factionData?.color }}
+          >
+            <span className="text-lg">{factionData?.emblem}</span>
+            <span className="font-display text-xs tracking-wider">
+              {factionData?.name}
+            </span>
           </div>
           
-          {/* Territory count */}
-          <div className="text-sm font-mono text-steel-light">
+          <div className="text-xs font-mono text-steel-light">
             <span className="text-steel-light/50">Territory: </span>
             <span style={{ color: factionData?.color }}>{territoryCount}</span>
             <span className="text-steel-light/50">/{totalHexes}</span>
           </div>
         </div>
         
-        {/* Turn controls */}
+        {/* Row 2: Resources */}
+        <ResourceBar resources={resources} factionColor={factionData?.color} />
+        
+        {/* Row 3: Turn/Phase */}
         <TurnBar
           turn={turn}
           phase={phase}
@@ -144,10 +146,10 @@ export default function GameBoard({ state, actions, dispatch }) {
         />
       </div>
       
-      {/* Main content - Map and side panel */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Map */}
-        <div className="flex-1 relative">
+      {/* Main content area */}
+      <div className="flex-1 flex flex-col md:flex-row min-h-0">
+        {/* Map container - scrollable */}
+        <div className="flex-1 overflow-auto relative" style={{ WebkitOverflowScrolling: 'touch' }}>
           <HexMap
             mapData={mapData}
             units={units}
@@ -158,15 +160,15 @@ export default function GameBoard({ state, actions, dispatch }) {
             onHexClick={handleHexClick}
           />
           
-          {/* Phase instructions overlay */}
-          <div className="absolute top-4 left-4 panel text-sm max-w-xs">
+          {/* Phase hint - top left */}
+          <div className="absolute top-2 left-2 panel text-xs p-2 max-w-[180px]">
             <PhaseInstructions phase={phase} onOpenDiplomacy={() => setShowDiplomacy(true)} />
           </div>
           
           {/* AI Thinking overlay */}
           {aiThinking && (
-            <div className="absolute inset-0 bg-void-950/50 flex items-center justify-center">
-              <div className="panel px-8 py-4 animate-pulse">
+            <div className="absolute inset-0 bg-void-950/70 flex items-center justify-center">
+              <div className="panel px-6 py-3 animate-pulse">
                 <span className="font-display text-steel-bright tracking-wider">
                   AI THINKING...
                 </span>
@@ -175,59 +177,114 @@ export default function GameBoard({ state, actions, dispatch }) {
           )}
         </div>
         
-        {/* Side panel */}
-        <div className="flex-none w-80 p-4 space-y-4 overflow-y-auto">
+        {/* Desktop side panel */}
+        <div className="hidden md:block flex-none w-80 p-4 space-y-4 overflow-y-auto border-l border-steel-light/10">
           <HexInfoPanel
             hex={selectedHexData}
             units={unitsOnSelectedHex}
             onClose={actions.clearSelection}
           />
           
-          {/* Build Menu - Show during production phase when owned hex selected */}
-          {phase === 'production' && 
-           selectedHexData && 
-           selectedHexData.owner === playerFaction && (
-            <BuildMenu
-              hex={selectedHexData}
-              playerResources={resources}
-              buildingQueue={buildingQueue || []}
-              onBuild={(buildingType) => {
-                actions.startBuilding(selectedHex, buildingType, playerFaction)
-              }}
-              onClose={actions.clearSelection}
-            />
-          )}
-          
-          {/* Train Menu - Show during production phase when owned hex selected */}
-          {phase === 'production' && 
-           selectedHexData && 
-           selectedHexData.owner === playerFaction && (
-            <TrainMenu
-              hex={selectedHexData}
-              playerResources={resources}
-              trainingQueue={trainingQueue || []}
-              onTrain={(unitType) => {
-                actions.startTraining(selectedHex, unitType, playerFaction)
-              }}
-              onClose={actions.clearSelection}
-            />
+          {phase === 'production' && isOwnedHex && (
+            <>
+              <BuildMenu
+                hex={selectedHexData}
+                playerResources={resources}
+                buildingQueue={buildingQueue || []}
+                onBuild={(buildingType) => {
+                  actions.startBuilding(selectedHex, buildingType, playerFaction)
+                }}
+                onClose={actions.clearSelection}
+              />
+              <TrainMenu
+                hex={selectedHexData}
+                playerResources={resources}
+                trainingQueue={trainingQueue || []}
+                onTrain={(unitType) => {
+                  actions.startTraining(selectedHex, unitType, playerFaction)
+                }}
+                onClose={actions.clearSelection}
+              />
+            </>
           )}
         </div>
       </div>
       
-      {/* Action hints */}
-      {selectedUnit && validMoves.length > 0 && (
-        <ActionHint 
-          message="Click a highlighted hex to move the selected unit"
-          type="move"
-        />
+      {/* Mobile bottom tabs - only show when hex selected */}
+      {selectedHexData && (
+        <div className="md:hidden flex-none border-t border-steel-light/20 bg-void-950">
+          {/* Tab buttons */}
+          <div className="flex border-b border-steel-light/10">
+            <MobileTab 
+              label="Info" 
+              active={mobilePanel === 'info'} 
+              onClick={() => setMobilePanel(mobilePanel === 'info' ? null : 'info')} 
+            />
+            {phase === 'production' && isOwnedHex && (
+              <>
+                <MobileTab 
+                  label="Build" 
+                  active={mobilePanel === 'build'} 
+                  onClick={() => setMobilePanel(mobilePanel === 'build' ? null : 'build')} 
+                />
+                <MobileTab 
+                  label="Train" 
+                  active={mobilePanel === 'train'} 
+                  onClick={() => setMobilePanel(mobilePanel === 'train' ? null : 'train')} 
+                />
+              </>
+            )}
+            <button 
+              onClick={closeMobilePanel}
+              className="flex-none px-4 py-2 text-steel-light/50 hover:text-steel-light"
+            >
+              ✕
+            </button>
+          </div>
+          
+          {/* Tab content */}
+          {mobilePanel && (
+            <div className="max-h-[40vh] overflow-y-auto p-3" style={{ WebkitOverflowScrolling: 'touch' }}>
+              {mobilePanel === 'info' && (
+                <HexInfoPanel
+                  hex={selectedHexData}
+                  units={unitsOnSelectedHex}
+                  onClose={closeMobilePanel}
+                />
+              )}
+              {mobilePanel === 'build' && phase === 'production' && isOwnedHex && (
+                <BuildMenu
+                  hex={selectedHexData}
+                  playerResources={resources}
+                  buildingQueue={buildingQueue || []}
+                  onBuild={(buildingType) => {
+                    actions.startBuilding(selectedHex, buildingType, playerFaction)
+                  }}
+                  onClose={closeMobilePanel}
+                />
+              )}
+              {mobilePanel === 'train' && phase === 'production' && isOwnedHex && (
+                <TrainMenu
+                  hex={selectedHexData}
+                  playerResources={resources}
+                  trainingQueue={trainingQueue || []}
+                  onTrain={(unitType) => {
+                    actions.startTraining(selectedHex, unitType, playerFaction)
+                  }}
+                  onClose={closeMobilePanel}
+                />
+              )}
+            </div>
+          )}
+        </div>
       )}
       
-      {selectedUnit && validAttacks.length > 0 && (
-        <ActionHint 
-          message="Red hexes contain enemy units you can attack"
-          type="attack"
-        />
+      {/* Action hints */}
+      {selectedUnit && validMoves.length > 0 && !mobilePanel && (
+        <ActionHint message="Tap highlighted hex to move" type="move" />
+      )}
+      {selectedUnit && validAttacks.length > 0 && !mobilePanel && (
+        <ActionHint message="Red = enemy. Tap to attack" type="attack" />
       )}
       
       {/* Combat Modal */}
@@ -256,77 +313,64 @@ export default function GameBoard({ state, actions, dispatch }) {
       )}
       
       {/* Version */}
-      <div className="absolute bottom-2 right-2 text-xs font-mono text-steel-light/30">
-        v0.3.0
+      <div className="absolute bottom-2 right-2 text-xs font-mono text-steel-light/30 pointer-events-none">
+        v0.3.1
       </div>
     </div>
   )
 }
 
-// Phase-specific instructions
+// Mobile tab button
+function MobileTab({ label, active, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`
+        flex-1 px-3 py-2 text-xs font-display uppercase tracking-wider
+        transition-colors
+        ${active 
+          ? 'text-steel-bright bg-steel/30 border-b-2 border-continuity' 
+          : 'text-steel-light/60 hover:text-steel-light'
+        }
+      `}
+    >
+      {label}
+    </button>
+  )
+}
+
+// Phase instructions
 function PhaseInstructions({ phase, onOpenDiplomacy }) {
-  const instructions = {
-    production: {
-      title: 'Production Phase',
-      text: 'Resources collected. Select your territory to build structures.',
-      icon: '⚙',
-    },
-    diplomacy: {
-      title: 'Diplomacy Phase',
-      text: 'Manage relations with other factions.',
-      icon: '🤝',
-    },
-    movement: {
-      title: 'Movement Phase',
-      text: 'Select units and move them. Click enemies to attack.',
-      icon: '→',
-    },
-    combat: {
-      title: 'Combat Phase',
-      text: 'Resolve battles with adjacent enemies.',
-      icon: '⚔',
-    },
-  }
-  
-  const info = instructions[phase] || instructions.production
+  const info = {
+    production: { icon: '⚙', title: 'Production', text: 'Tap your hex to build' },
+    diplomacy: { icon: '🤝', title: 'Diplomacy', text: 'Manage relations' },
+    movement: { icon: '→', title: 'Movement', text: 'Move & attack' },
+    combat: { icon: '⚔', title: 'Combat', text: 'Resolve battles' },
+  }[phase] || { icon: '?', title: phase, text: '' }
   
   return (
     <div>
       <div className="flex items-center gap-2 mb-1">
-        <span className="text-lg">{info.icon}</span>
-        <span className="font-display text-xs tracking-wider uppercase text-steel-light">
-          {info.title}
-        </span>
+        <span>{info.icon}</span>
+        <span className="font-display uppercase text-steel-light">{info.title}</span>
       </div>
-      <p className="text-xs text-steel-light/70 mb-2">
-        {info.text}
-      </p>
-      {phase === 'diplomacy' && onOpenDiplomacy && (
-        <button
-          onClick={onOpenDiplomacy}
-          className="btn-primary text-xs py-1 px-3"
-        >
-          Open Diplomacy
+      <p className="text-steel-light/60">{info.text}</p>
+      {phase === 'diplomacy' && (
+        <button onClick={onOpenDiplomacy} className="mt-2 btn-primary text-xs py-1 px-2">
+          Open
         </button>
       )}
     </div>
   )
 }
 
-// Action hint toast
+// Action hint
 function ActionHint({ message, type }) {
-  const colors = {
-    move: 'border-success/50 bg-success/10',
-    attack: 'border-danger/50 bg-danger/10',
-  }
-  
   return (
     <div className={`
-      fixed bottom-4 left-1/2 -translate-x-1/2
-      px-4 py-2 rounded border
-      text-sm text-steel-bright
-      animate-fade-in
-      ${colors[type] || 'border-steel-light/50 bg-steel/10'}
+      fixed bottom-20 left-1/2 -translate-x-1/2 z-30
+      px-3 py-2 rounded border text-xs text-steel-bright
+      ${type === 'move' ? 'border-success/50 bg-success/10' : 'border-danger/50 bg-danger/10'}
     `}>
       {message}
     </div>
