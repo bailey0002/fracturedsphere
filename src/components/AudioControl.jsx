@@ -1,24 +1,22 @@
-// Audio control button - persistent speaker toggle
+// Audio control - speaker toggle button
 
-export default function AudioControl({ isMuted, onToggle }) {
+import { useAudio } from '../hooks/useAudio'
+
+export default function AudioControl() {
+  const { isInitialized, isMuted, toggleMute } = useAudio()
+  
+  // Don't show until audio is initialized
+  if (!isInitialized) return null
+  
   return (
     <button
-      onClick={onToggle}
-      className="
-        fixed top-4 right-4 z-50
-        w-10 h-10 rounded-full
-        bg-steel/50 border border-steel-light/20
-        flex items-center justify-center
-        text-steel-light hover:text-steel-bright
-        hover:border-steel-light/40 hover:bg-steel/70
-        transition-all duration-200
-        backdrop-blur-sm
-      "
+      onClick={toggleMute}
+      className="p-2 rounded-lg bg-void-900/80 border border-steel-light/20 
+                 hover:bg-steel/20 transition-colors text-steel-light"
       title={isMuted ? 'Unmute' : 'Mute'}
       aria-label={isMuted ? 'Unmute audio' : 'Mute audio'}
     >
       {isMuted ? (
-        // Muted icon
         <svg 
           xmlns="http://www.w3.org/2000/svg" 
           viewBox="0 0 24 24" 
@@ -27,14 +25,13 @@ export default function AudioControl({ isMuted, onToggle }) {
           strokeWidth="2" 
           strokeLinecap="round" 
           strokeLinejoin="round"
-          className="w-5 h-5"
+          className="w-4 h-4"
         >
           <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
           <line x1="23" y1="9" x2="17" y2="15" />
           <line x1="17" y1="9" x2="23" y2="15" />
         </svg>
       ) : (
-        // Unmuted icon
         <svg 
           xmlns="http://www.w3.org/2000/svg" 
           viewBox="0 0 24 24" 
@@ -43,7 +40,7 @@ export default function AudioControl({ isMuted, onToggle }) {
           strokeWidth="2" 
           strokeLinecap="round" 
           strokeLinejoin="round"
-          className="w-5 h-5"
+          className="w-4 h-4"
         >
           <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
           <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
