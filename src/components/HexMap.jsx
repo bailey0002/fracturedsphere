@@ -1,4 +1,4 @@
-// Hex map grid component
+// Hex map grid component with touch support
 
 import { useMemo, useCallback, useState, useRef, useEffect } from 'react'
 import HexTile from './HexTile'
@@ -16,10 +16,11 @@ export default function HexMap({
   playerFaction,
   onHexClick,
 }) {
-  const svgRef = useRef(null)
+  const containerRef = useRef(null)
   const [viewBox, setViewBox] = useState({ x: 0, y: 0, width: 800, height: 600 })
-  const [isDragging, setIsDragging] = useState(false)
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
+  const [isPanning, setIsPanning] = useState(false)
+  const [lastPos, setLastPos] = useState({ x: 0, y: 0 })
+  const [scale, setScale] = useState(1)
   
   // Calculate map bounds
   const mapBounds = useMemo(() => {
@@ -41,9 +42,9 @@ export default function HexMap({
     return { minX, maxX, minY, maxY }
   }, [mapData])
   
-  // Center viewbox on map
+  // Center viewbox on map initially
   useEffect(() => {
-    const padding = 100
+    const padding = 80
     const width = mapBounds.maxX - mapBounds.minX + padding * 2
     const height = mapBounds.maxY - mapBounds.minY + padding * 2
     
@@ -77,27 +78,42 @@ export default function HexMap({
     [validAttacks]
   )
   
-  // Determine visibility for each hex
+  // Simplified visibility - show all hexes, just dim unexplored ones slightly
   const getVisibility = useCallback((hex) => {
-    if (!playerFaction) return 'visible' // Show all in faction select
-    if (hex.visible[playerFaction]) return 'visible'
-    if (hex.explored[playerFaction]) return 'explored'
-    return 'hidden'
+    if (!playerFaction) return 'visible'
+    // Show everything but mark explored status
+    if (hex.visible?.[playerFaction]) return 'visible'
+    if (hex.explored?.[playerFaction]) return 'explored'
+    // Still show unexplored hexes, just slightly dimmed
+    return 'unexplored'
   }, [playerFaction])
   
-  // Pan handlers
-  const handleMouseDown = (e) => {
-    if (e.button === 1 || e.button === 2) { // Middle or right click
-      setIsDragging(true)
-      setDragStart({ x: e.clientX, y: e.clientY })
+  // Get event coordinates (works for both mouse and touch)
+  const getEventPos = (e) => {
+    if (e.touches && e.touches.length > 0) {
+      return { x: e.touches[0].clientX, y: e.touches[0].clientY }
     }
+    return { x: e.clientX, y: e.clientY }
   }
   
-  const handleMouseMove = (e) => {
-    if (!isDragging) return
+  // Pan start
+  const handlePanStart = (e) => {
+    // Don't pan on hex clicks - only on two-finger touch or mouse drag
+    if (e.touches && e.touches.length < 2) return
+    if (e.type === 'mousedown' && e.button !== 1 && e.button !== 2) return
     
-    const dx = e.clientX - dragStart.x
-    const dy = e.clientY - dragStart.y
+    setIsPanning(true)
+    setLastPos(getEventPos(e))
+    e.preventDefault()
+  }
+  
+  // Pan move
+  const handlePanMove = (e) => {
+    if (!isPanning) return
+    
+    const pos = getEventPos(e)
+    const dx = (pos.x - lastPos.x) * (viewBox.width / containerRef.current.clientWidth)
+    const dy = (pos.y - lastPos.y) * (viewBox.height / containerRef.current.clientHeight)
     
     setViewBox(prev => ({
       ...prev,
@@ -105,14 +121,15 @@ export default function HexMap({
       y: prev.y - dy,
     }))
     
-    setDragStart({ x: e.clientX, y: e.clientY })
+    setLastPos(pos)
   }
   
-  const handleMouseUp = () => {
-    setIsDragging(false)
+  // Pan end
+  const handlePanEnd = () => {
+    setIsPanning(false)
   }
   
-  // Zoom handler
+  // Zoom handler (mouse wheel)
   const handleWheel = (e) => {
     e.preventDefault()
     const scaleFactor = e.deltaY > 0 ? 1.1 : 0.9
@@ -122,7 +139,7 @@ export default function HexMap({
       const newHeight = prev.height * scaleFactor
       
       // Clamp zoom
-      if (newWidth < 400 || newWidth > 2000) return prev
+      if (newWidth < 300 || newWidth > 2000) return prev
       
       // Zoom toward center
       const dx = (newWidth - prev.width) / 2
@@ -137,6 +154,49 @@ export default function HexMap({
     })
   }
   
+  // Pinch zoom for touch
+  const lastPinchDist = useRef(0)
+  
+  const handleTouchMove = (e) => {
+    if (e.touches.length === 2) {
+      // Pinch zoom
+      const dx = e.touches[0].clientX - e.touches[1].clientX
+      const dy = e.touches[0].clientY - e.touches[1].clientY
+      const dist = Math.sqrt(dx * dx + dy * dy)
+      
+      if (lastPinchDist.current > 0) {
+        const scaleFactor = lastPinchDist.current / dist
+        
+        setViewBox(prev => {
+          const newWidth = prev.width * scaleFactor
+          const newHeight = prev.height * scaleFactor
+          
+          if (newWidth < 300 || newWidth > 2000) return prev
+          
+          const dxView = (newWidth - prev.width) / 2
+          const dyView = (newHeight - prev.height) / 2
+          
+          return {
+            x: prev.x - dxView,
+            y: prev.y - dyView,
+            width: newWidth,
+            height: newHeight,
+          }
+        })
+      }
+      
+      lastPinchDist.current = dist
+      e.preventDefault()
+    } else if (isPanning) {
+      handlePanMove(e)
+    }
+  }
+  
+  const handleTouchEnd = () => {
+    lastPinchDist.current = 0
+    setIsPanning(false)
+  }
+  
   if (!mapData || Object.keys(mapData).length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-steel-light">
@@ -146,18 +206,23 @@ export default function HexMap({
   }
   
   return (
-    <div className="relative w-full h-full overflow-hidden bg-void-950">
+    <div 
+      ref={containerRef}
+      className="relative w-full h-full overflow-hidden bg-void-950 touch-none"
+    >
       {/* Grid background */}
       <div className="absolute inset-0 grid-bg opacity-30" />
       
       <svg
-        ref={svgRef}
         className="w-full h-full"
         viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
+        onMouseDown={handlePanStart}
+        onMouseMove={handlePanMove}
+        onMouseUp={handlePanEnd}
+        onMouseLeave={handlePanEnd}
+        onTouchStart={handlePanStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
         onWheel={handleWheel}
         onContextMenu={e => e.preventDefault()}
       >
@@ -201,8 +266,11 @@ export default function HexMap({
       </svg>
       
       {/* Map controls hint */}
-      <div className="absolute bottom-4 left-4 text-xs text-steel-light/50 font-mono">
-        Scroll to zoom • Right-drag to pan
+      <div className="absolute bottom-2 left-2 text-xs text-steel-light/50 font-mono hidden md:block">
+        Scroll: zoom • Right-drag: pan
+      </div>
+      <div className="absolute bottom-2 left-2 text-xs text-steel-light/50 font-mono md:hidden">
+        Pinch: zoom • Two-finger drag: pan
       </div>
     </div>
   )

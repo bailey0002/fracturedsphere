@@ -9,6 +9,7 @@ import CombatModal from './CombatModal'
 import BuildMenu from './BuildMenu'
 import TrainMenu from './TrainMenu'
 import DiplomacyPanel from './DiplomacyPanel'
+import CompanionGuide from './CompanionGuide'
 import { useAI } from '../hooks/useAI'
 import { FACTIONS } from '../data/factions'
 import { hexId } from '../utils/hexMath'
@@ -311,6 +312,22 @@ export default function GameBoard({ state, actions, dispatch }) {
           onClose={() => setShowDiplomacy(false)}
         />
       )}
+      
+      {/* Companion Guide - contextual help */}
+      <CompanionGuide
+        phase={phase}
+        turn={turn}
+        selectedHex={selectedHex}
+        selectedUnit={selectedUnit}
+        validMoves={validMoves}
+        validAttacks={validAttacks}
+        pendingCombat={pendingCombat}
+        playerFaction={playerFaction}
+        units={units}
+        factionResources={resources}
+        aiThinking={aiThinking}
+        mapData={mapData}
+      />
       
       {/* Version */}
       <div className="absolute bottom-2 right-2 text-xs font-mono text-steel-light/30 pointer-events-none">
