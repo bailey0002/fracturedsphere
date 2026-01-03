@@ -1,413 +1,548 @@
-// AI System for The Fractured Sphere
-// Handles automated decision-making for non-player factions
+// AI system for The Fractured Sphere
+// Handles AI faction turns with Command, Conflict, and Maneuver phases
 
-import { useCallback, useRef } from 'react'
+import { useEffect, useCallback, useRef } from 'react'
+import { PHASES } from './useGameState'
 import { FACTIONS } from '../data/factions'
-import { UNITS } from '../data/units'
-import { TERRAIN_TYPES } from '../data/terrain'
+import { UNITS, DOCTRINES } from '../data/units'
+import { BUILDINGS, TERRAIN_TYPES } from '../data/terrain'
 import { hexId, getHexNeighbors, hexDistance } from '../utils/hexMath'
-import { previewCombat, getRecommendedDoctrine, resolveCombat } from '../utils/combatResolver'
+import { 
+  calculateUnitStrength, 
+  previewCombat, 
+  resolveCombat,
+  getRecommendedDoctrine,
+} from '../utils/combatResolver'
 
-/**
- * Calculate strategic value of a hex
- */
-function evaluateHexValue(hex, mapData, factionId) {
-  let value = 0
-  
-  // Resource value
-  value += (hex.resources.gold || 0) * 2
-  value += (hex.resources.iron || 0) * 1.5
-  value += (hex.resources.grain || 0) * 1
-  
-  // Capital bonus
-  if (hex.isCapital) {
-    value += 50
-  }
-  
-  // Strategic position (central hexes worth more)
-  const distFromCenter = hexDistance(hex.q, hex.r, 0, 0)
-  value += Math.max(0, 10 - distFromCenter * 2)
-  
-  // Terrain value
-  const terrain = TERRAIN_TYPES[hex.terrain]
-  if (terrain) {
-    value += terrain.defenseModifier * 10
-  }
-  
-  // Building value
-  if (hex.buildings?.length > 0) {
-    value += hex.buildings.length * 15
-  }
-  
-  // Adjacent to own territory bonus
-  const neighbors = getHexNeighbors(hex.q, hex.r)
-  const adjacentOwned = neighbors.filter(n => {
-    const nHex = mapData[hexId(n.q, n.r)]
-    return nHex && nHex.owner === factionId
-  }).length
-  value += adjacentOwned * 3
-  
-  return value
+// AI decision delays (ms) for visual feedback
+const AI_DELAYS = {
+  PHASE_START: 500,
+  ACTION: 400,
+  COMBAT: 800,
+  PHASE_END: 300,
 }
 
-/**
- * Evaluate threat level of an enemy unit
- */
-function evaluateThreat(enemyUnit, ownUnits, mapData) {
-  const unitDef = UNITS[enemyUnit.type]
-  if (!unitDef) return 0
+export function useAI(state, actions, chronicle) {
+  const isProcessingRef = useRef(false)
+  const timeoutRef = useRef(null)
   
-  let threat = unitDef.stats.attack * 2 + unitDef.stats.defense
+  const {
+    gameStarted,
+    gameOver,
+    currentFaction,
+    playerFaction,
+    phase,
+    units,
+    mapData,
+    factionResources,
+    buildingQueue,
+    trainingQueue,
+    aiThinking,
+  } = state
   
-  // Health modifier
-  threat *= (enemyUnit.health || 100) / 100
+  const {
+    advancePhase,
+    endTurn,
+    selectHex,
+    queueBuilding,
+    queueUnit,
+    resolveCombat: applyResolveCombat,
+    setAiThinking,
+  } = actions
   
-  // Proximity to own units/territory
-  let minDist = Infinity
-  ownUnits.forEach(unit => {
-    const dist = hexDistance(enemyUnit.q, enemyUnit.r, unit.q, unit.r)
-    minDist = Math.min(minDist, dist)
-  })
+  const { addEntry, CHRONICLE_TYPES } = chronicle || { addEntry: () => {}, CHRONICLE_TYPES: {} }
   
-  if (minDist <= 2) threat *= 1.5
-  if (minDist <= 1) threat *= 2
+  // Check if current faction is AI
+  const isAITurn = gameStarted && !gameOver && currentFaction && currentFaction !== playerFaction
   
-  return threat
-}
-
-/**
- * Find best move for a unit based on AI personality
- */
-function findBestMove(unit, validMoves, state, faction) {
-  const { mapData, units } = state
-  const traits = faction.aiTraits
+  // Get faction data and resources
+  const factionData = currentFaction ? FACTIONS[currentFaction] : null
+  const resources = currentFaction ? factionResources[currentFaction] : null
   
-  let bestMove = null
-  let bestScore = -Infinity
+  // Get AI traits
+  const aiTraits = factionData?.aiTraits || {
+    aggression: 0.5,
+    expansion: 0.5,
+    economy: 0.5,
+  }
   
-  validMoves.forEach(move => {
-    let score = 0
-    const targetHex = mapData[hexId(move.q, move.r)]
-    if (!targetHex) return
+  // ===========================================================================
+  // AI DECISION MAKING
+  // ===========================================================================
+  
+  // Get territories owned by faction
+  const getOwnedTerritories = useCallback(() => {
+    return Object.values(mapData).filter(hex => hex.owner === currentFaction)
+  }, [mapData, currentFaction])
+  
+  // Get faction's units
+  const getFactionUnits = useCallback(() => {
+    return units.filter(u => u.owner === currentFaction && u.health > 0)
+  }, [units, currentFaction])
+  
+  // Get enemy units
+  const getEnemyUnits = useCallback(() => {
+    return units.filter(u => u.owner !== currentFaction && u.health > 0)
+  }, [units, currentFaction])
+  
+  // Evaluate building priority
+  const evaluateBuildingPriority = useCallback((hex) => {
+    const terrain = TERRAIN_TYPES[hex.terrain]
+    if (!terrain || !terrain.canBuild?.length) return null
     
-    // Value of capturing/claiming territory
-    if (targetHex.owner !== faction.id) {
-      score += evaluateHexValue(targetHex, mapData, faction.id) * traits.expansion
-    }
-    
-    // Proximity to enemies (aggression)
-    const enemyUnits = units.filter(u => u.owner !== faction.id)
-    enemyUnits.forEach(enemy => {
-      const dist = hexDistance(move.q, move.r, enemy.q, enemy.r)
-      if (dist <= 1) {
-        // Can attack from here - value based on aggression
-        const attackValue = traits.aggression * 20
-        score += attackValue
-      }
-    })
-    
-    // Defensive value of position
-    const terrain = TERRAIN_TYPES[targetHex.terrain]
-    if (terrain) {
-      score += terrain.defenseModifier * 10 * (1 - traits.riskTolerance)
-    }
-    
-    // Proximity to own capital (defensive)
-    const ownCapital = Object.values(mapData).find(
-      h => h.isCapital && h.owner === faction.id
+    const existingBuildings = hex.buildings || []
+    const availableBuildings = terrain.canBuild.filter(
+      b => !existingBuildings.includes(b)
     )
-    if (ownCapital) {
-      const distToCapital = hexDistance(move.q, move.r, ownCapital.q, ownCapital.r)
-      score += (5 - distToCapital) * (1 - traits.aggression)
-    }
     
-    if (score > bestScore) {
-      bestScore = score
-      bestMove = move
-    }
-  })
-  
-  return bestMove
-}
-
-/**
- * Find best attack target for a unit
- */
-function findBestTarget(unit, validAttacks, state, faction) {
-  const { units, mapData } = state
-  const traits = faction.aiTraits
-  
-  let bestTarget = null
-  let bestScore = -Infinity
-  
-  validAttacks.forEach(attack => {
-    const target = units.find(u => u.id === attack.targetId)
-    if (!target) return
+    if (availableBuildings.length === 0) return null
     
-    const targetHex = mapData[hexId(target.q, target.r)]
-    const terrain = targetHex?.terrain || 'plains'
-    const hexBuildings = targetHex?.buildings || []
+    // Priority based on resources and AI traits
+    let best = null
+    let bestScore = -1
     
-    // Preview combat
-    const attackerDoc = getRecommendedDoctrine(unit, target, terrain, true)
-    const defenderDoc = getRecommendedDoctrine(target, unit, terrain, false)
-    const preview = previewCombat(unit, target, attackerDoc, defenderDoc, terrain, hexBuildings)
-    
-    let score = 0
-    
-    // Win probability
-    score += preview.winProbability * traits.riskTolerance
-    
-    // Value of destroying target
-    if (preview.defender.destroyed) {
-      score += 30
-      // Extra value for capturing territory
-      if (targetHex) {
-        score += evaluateHexValue(targetHex, mapData, faction.id)
+    for (const buildingId of availableBuildings) {
+      const building = BUILDINGS[buildingId]
+      if (!building) continue
+      
+      // Check if can afford
+      if (resources.gold < building.cost.gold) continue
+      if (resources.iron < building.cost.iron) continue
+      
+      // Score based on AI traits
+      let score = 0
+      
+      // Economy-focused AI likes income buildings
+      if (building.production?.gold) score += building.production.gold * aiTraits.economy
+      if (building.production?.iron) score += building.production.iron * aiTraits.economy * 0.8
+      if (building.production?.grain) score += building.production.grain * aiTraits.economy * 0.5
+      
+      // Aggressive AI likes military buildings
+      if (building.effects?.defenseBonus) score += building.effects.defenseBonus * 20 * aiTraits.aggression
+      if (buildingId === 'academy') score += 15 * aiTraits.aggression
+      if (buildingId === 'fortress') score += 20 * aiTraits.aggression
+      
+      // Prefer cheaper buildings early
+      score -= (building.cost.gold / 50) * (1 - aiTraits.economy)
+      
+      if (score > bestScore) {
+        bestScore = score
+        best = buildingId
       }
     }
     
-    // Risk of losing own unit
-    if (preview.attacker.destroyed) {
-      score -= 40 * (1 - traits.riskTolerance)
-    }
-    
-    // Target priority (attack damaged units, high-value targets)
-    const targetDef = UNITS[target.type]
-    if (targetDef) {
-      score += (100 - (target.health || 100)) * 0.3 // Damaged targets
-      score += targetDef.cost.gold * 0.1 // High value targets
-    }
-    
-    if (score > bestScore) {
-      bestScore = score
-      bestTarget = { attack, preview, score }
-    }
-  })
+    return best
+  }, [resources, aiTraits])
   
-  // Only attack if score meets threshold based on risk tolerance
-  const threshold = 20 * (1 - traits.riskTolerance)
-  if (bestTarget && bestTarget.score >= threshold) {
+  // Evaluate unit training priority
+  const evaluateTrainingPriority = useCallback((hex) => {
+    // Can only train at capital or with certain buildings
+    const canTrain = hex.isCapital || 
+                     hex.buildings?.includes('academy') || 
+                     hex.buildings?.includes('fortress')
+    
+    if (!canTrain) return null
+    
+    // Check if hex already has a unit or is training
+    const hasUnit = units.some(u => u.q === hex.q && u.r === hex.r)
+    const isTraining = trainingQueue.some(q => q.q === hex.q && q.r === hex.r)
+    
+    if (hasUnit || isTraining) return null
+    
+    // Pick unit based on AI traits and resources
+    const unitOptions = Object.entries(UNITS)
+    let best = null
+    let bestScore = -1
+    
+    for (const [unitId, unitDef] of unitOptions) {
+      // Check affordability
+      if (resources.gold < unitDef.cost.gold) continue
+      if (resources.iron < unitDef.cost.iron) continue
+      
+      let score = 0
+      
+      // Combat power
+      score += (unitDef.stats.attack + unitDef.stats.defense) * aiTraits.aggression
+      
+      // Mobility
+      score += unitDef.stats.movement * aiTraits.expansion * 3
+      
+      // Cost efficiency
+      const costRatio = (unitDef.stats.attack + unitDef.stats.defense) / 
+                        (unitDef.cost.gold + unitDef.cost.iron)
+      score += costRatio * 20 * aiTraits.economy
+      
+      // Prefer faster training
+      score -= unitDef.trainTime * 2
+      
+      if (score > bestScore) {
+        bestScore = score
+        best = unitId
+      }
+    }
+    
+    return best
+  }, [resources, units, trainingQueue, aiTraits])
+  
+  // Evaluate attack target
+  const evaluateAttackTarget = useCallback((unit) => {
+    const unitDef = UNITS[unit.type]
+    if (!unitDef) return null
+    
+    const range = unitDef.stats.range || 1
+    const enemies = getEnemyUnits()
+    
+    let bestTarget = null
+    let bestScore = -1
+    
+    for (const enemy of enemies) {
+      const dist = hexDistance(unit.q, unit.r, enemy.q, enemy.r)
+      if (dist > range) continue
+      
+      const enemyDef = UNITS[enemy.type]
+      if (!enemyDef) continue
+      
+      // Get hex for terrain
+      const targetHex = mapData[hexId(enemy.q, enemy.r)]
+      
+      // Preview combat
+      const attackerDoctrine = getRecommendedDoctrine(unit, enemy, targetHex?.terrain, true)
+      const defenderDoctrine = getRecommendedDoctrine(enemy, unit, targetHex?.terrain, false)
+      const preview = previewCombat(unit, enemy, attackerDoctrine, defenderDoctrine, targetHex?.terrain)
+      
+      // Score based on win probability and target value
+      let score = preview.winProbability
+      
+      // Bonus for likely kills
+      if (preview.defender.destroyed) score += 30
+      
+      // Bonus for capturing valuable hexes
+      if (targetHex?.isCapital) score += 40
+      if (targetHex?.buildings?.length > 0) score += 10 * targetHex.buildings.length
+      
+      // Penalty for likely losses
+      if (preview.attacker.destroyed) score -= 50
+      if (preview.attacker.newHealth < 30) score -= 20
+      
+      // Aggressive AI is more willing to take risks
+      score *= (0.5 + aiTraits.aggression)
+      
+      if (score > bestScore && score > 30) { // Only attack if reasonable chance
+        bestScore = score
+        bestTarget = {
+          enemy,
+          hex: targetHex,
+          preview,
+          attackerDoctrine,
+          defenderDoctrine,
+        }
+      }
+    }
+    
     return bestTarget
-  }
+  }, [getEnemyUnits, mapData, aiTraits])
   
-  return null
-}
-
-/**
- * Main AI hook
- */
-export function useAI(state, dispatch) {
-  const processingRef = useRef(false)
-  
-  /**
-   * Process a single AI faction's turn
-   */
-  const processAITurn = useCallback((factionId) => {
-    if (processingRef.current) return Promise.resolve()
-    if (factionId === state.playerFaction) return Promise.resolve()
+  // Evaluate move target
+  const evaluateMoveTarget = useCallback((unit) => {
+    const unitDef = UNITS[unit.type]
+    if (!unitDef || unit.movedThisTurn) return null
     
-    processingRef.current = true
+    const movement = unitDef.stats.movement
+    const owned = getOwnedTerritories()
+    const enemies = getEnemyUnits()
     
-    const faction = FACTIONS[factionId]
-    if (!faction) {
-      processingRef.current = false
-      return Promise.resolve()
+    // Find all reachable hexes
+    const visited = new Set()
+    const reachable = []
+    const queue = [{ q: unit.q, r: unit.r, cost: 0 }]
+    visited.add(hexId(unit.q, unit.r))
+    
+    while (queue.length > 0) {
+      const current = queue.shift()
+      const neighbors = getHexNeighbors(current.q, current.r)
+      
+      for (const neighbor of neighbors) {
+        const nId = hexId(neighbor.q, neighbor.r)
+        if (visited.has(nId)) continue
+        
+        const hex = mapData[nId]
+        if (!hex) continue
+        
+        const terrain = TERRAIN_TYPES[hex.terrain]
+        const moveCost = terrain?.movementCost || 1
+        const totalCost = current.cost + moveCost
+        
+        if (totalCost > movement) continue
+        
+        // Can't move through enemies
+        const hasEnemy = units.some(u => 
+          u.q === neighbor.q && u.r === neighbor.r && u.owner !== currentFaction
+        )
+        if (hasEnemy) continue
+        
+        // Can't stack with friendlies
+        const hasFriendly = units.some(u =>
+          u.q === neighbor.q && u.r === neighbor.r && u.owner === currentFaction
+        )
+        if (hasFriendly) continue
+        
+        visited.add(nId)
+        reachable.push({ hex, cost: totalCost })
+        queue.push({ q: neighbor.q, r: neighbor.r, cost: totalCost })
+      }
     }
     
-    const factionUnits = state.units.filter(u => u.owner === factionId)
+    if (reachable.length === 0) return null
     
-    return new Promise((resolve) => {
-      let actionIndex = 0
+    // Score each reachable hex
+    let bestMove = null
+    let bestScore = -1
+    
+    for (const { hex, cost } of reachable) {
+      let score = 0
       
-      const processNextUnit = () => {
-        if (actionIndex >= factionUnits.length) {
-          processingRef.current = false
-          resolve()
-          return
-        }
-        
-        const unit = factionUnits[actionIndex]
-        
-        // Skip if already moved/attacked
-        if (unit.movedThisTurn && unit.attackedThisTurn) {
-          actionIndex++
-          setTimeout(processNextUnit, 100)
-          return
-        }
-        
-        // Get valid moves and attacks
-        const validMoves = calculateValidMovesForAI(state, unit)
-        const validAttacks = calculateValidAttacksForAI(state, unit)
-        
-        // Try to find best action
-        const bestAttack = findBestTarget(unit, validAttacks, state, faction)
-        const bestMove = findBestMove(unit, validMoves, state, faction)
-        
-        // Execute action
-        if (bestAttack && !unit.attackedThisTurn) {
-          // Attack - resolve immediately for AI
-          const combatResult = resolveCombat(bestAttack.preview)
-          const target = state.units.find(u => u.id === bestAttack.attack.targetId)
+      // Expansion: prefer unclaimed or enemy territory
+      if (!hex.owner) score += 20 * aiTraits.expansion
+      if (hex.owner && hex.owner !== currentFaction) score += 30 * aiTraits.aggression
+      
+      // Strategic value
+      if (hex.isCapital && hex.owner !== currentFaction) score += 50
+      if (hex.buildings?.length > 0) score += 10 * hex.buildings.length
+      
+      // Distance to enemies (aggressive AI wants to be close)
+      const closestEnemy = enemies.reduce((min, e) => {
+        const d = hexDistance(hex.q, hex.r, e.q, e.r)
+        return d < min ? d : min
+      }, Infinity)
+      score += (5 - closestEnemy) * 5 * aiTraits.aggression
+      
+      // Defensive value (terrain bonuses)
+      const terrain = TERRAIN_TYPES[hex.terrain]
+      score += (terrain?.defenseModifier || 0) * 20 * (1 - aiTraits.aggression)
+      
+      // Cost efficiency (prefer shorter moves only if better)
+      score -= cost * 2
+      
+      if (score > bestScore) {
+        bestScore = score
+        bestMove = hex
+      }
+    }
+    
+    return bestMove
+  }, [mapData, units, currentFaction, getOwnedTerritories, getEnemyUnits, aiTraits])
+  
+  // ===========================================================================
+  // AI PHASE EXECUTION
+  // ===========================================================================
+  
+  const executeCommandPhase = useCallback(async () => {
+    const owned = getOwnedTerritories()
+    
+    // Try to build or train at each territory
+    for (const hex of owned) {
+      // Check building queue
+      const isBuilding = buildingQueue.some(
+        q => q.q === hex.q && q.r === hex.r && q.owner === currentFaction
+      )
+      
+      if (!isBuilding) {
+        const buildingChoice = evaluateBuildingPriority(hex)
+        if (buildingChoice) {
+          await new Promise(r => setTimeout(r, AI_DELAYS.ACTION))
+          queueBuilding(buildingChoice, hex.q, hex.r, currentFaction)
           
-          // Use AI_RESOLVE_COMBAT which includes attacker/defender info directly
-          dispatch({
-            type: 'AI_RESOLVE_COMBAT',
-            attackerId: unit.id,
-            defenderId: bestAttack.attack.targetId,
-            result: {
-              attackerHealth: combatResult.attacker.newHealth,
-              defenderHealth: combatResult.defender.newHealth,
-              attackerDestroyed: combatResult.attacker.destroyed,
-              defenderDestroyed: combatResult.defender.destroyed,
-              attackerXPGain: combatResult.attacker.expGain || 5,
-              defenderXPGain: combatResult.defender.expGain || 5,
-              hexCaptured: combatResult.hexCaptured,
-            }
-          })
-          actionIndex++
-          setTimeout(processNextUnit, 500)
-        } else if (bestMove && !unit.movedThisTurn) {
-          // Move
-          dispatch({
-            type: 'MOVE_UNIT',
-            unitId: unit.id,
-            toQ: bestMove.q,
-            toR: bestMove.r,
-          })
-          actionIndex++
-          setTimeout(processNextUnit, 300)
-        } else {
-          // No action available
-          actionIndex++
-          setTimeout(processNextUnit, 100)
+          const building = BUILDINGS[buildingChoice]
+          if (chronicle?.addEntry) {
+            chronicle.addEntry('system', {
+              message: `${factionData?.name} begins constructing ${building?.name}.`,
+              faction: currentFaction,
+            })
+          }
         }
       }
       
-      // Start processing
-      setTimeout(processNextUnit, 500)
-    })
-  }, [state, dispatch])
+      // Try training
+      const unitChoice = evaluateTrainingPriority(hex)
+      if (unitChoice) {
+        await new Promise(r => setTimeout(r, AI_DELAYS.ACTION))
+        queueUnit(unitChoice, hex.q, hex.r, currentFaction)
+        
+        const unit = UNITS[unitChoice]
+        if (chronicle?.addEntry) {
+          chronicle.addEntry('system', {
+            message: `${factionData?.name} begins training ${unit?.name}.`,
+            faction: currentFaction,
+          })
+        }
+      }
+    }
+  }, [
+    getOwnedTerritories, 
+    evaluateBuildingPriority, 
+    evaluateTrainingPriority,
+    buildingQueue,
+    currentFaction,
+    queueBuilding,
+    queueUnit,
+    factionData,
+    chronicle,
+  ])
   
-  /**
-   * Process all AI factions
-   */
-  const processAllAI = useCallback(async () => {
-    const aiFactions = Object.keys(FACTIONS).filter(id => id !== state.playerFaction)
+  const executeConflictPhase = useCallback(async () => {
+    const myUnits = getFactionUnits()
     
-    for (const factionId of aiFactions) {
-      await processAITurn(factionId)
+    for (const unit of myUnits) {
+      if (unit.attackedThisTurn) continue
+      
+      const target = evaluateAttackTarget(unit)
+      if (target) {
+        await new Promise(r => setTimeout(r, AI_DELAYS.ACTION))
+        
+        // Resolve combat
+        const result = resolveCombat(target.preview)
+        
+        if (chronicle?.addEntry) {
+          const attackerUnit = UNITS[unit.type]
+          const defenderUnit = UNITS[target.enemy.type]
+          
+          chronicle.addEntry('combat_result', {
+            attacker: attackerUnit?.name,
+            defender: defenderUnit?.name,
+            attackerDestroyed: result.attacker.destroyed,
+            defenderDestroyed: result.defender.destroyed,
+            hexCaptured: result.hexCaptured,
+            location: target.hex?.terrain,
+            winner: result.defender.destroyed ? factionData?.name : 'defenders',
+            loser: result.defender.destroyed ? 'defenders' : factionData?.name,
+            subtype: result.defender.destroyed ? 
+              (result.attacker.damageTaken < 20 ? 'victory_decisive' : 'victory_close') : 
+              'defeat',
+            faction: currentFaction,
+          }, { important: true })
+        }
+        
+        // Apply result
+        applyResolveCombat({
+          attacker: { ...result.attacker, unitId: unit.id },
+          defender: { ...result.defender, unitId: target.enemy.id },
+          hexCaptured: result.hexCaptured,
+          hex: target.hex,
+        })
+        
+        await new Promise(r => setTimeout(r, AI_DELAYS.COMBAT))
+      }
     }
-  }, [state.playerFaction, processAITurn])
+  }, [
+    getFactionUnits,
+    evaluateAttackTarget,
+    applyResolveCombat,
+    factionData,
+    currentFaction,
+    chronicle,
+  ])
   
-  /**
-   * Get AI recommendation for a unit (for player hints)
-   */
-  const getRecommendation = useCallback((unit) => {
-    const faction = FACTIONS[unit.owner]
-    if (!faction) return null
+  const executeManeuverPhase = useCallback(async () => {
+    const myUnits = getFactionUnits()
     
-    const validMoves = calculateValidMovesForAI(state, unit)
-    const validAttacks = calculateValidAttacksForAI(state, unit)
+    for (const unit of myUnits) {
+      if (unit.movedThisTurn) continue
+      
+      const moveTarget = evaluateMoveTarget(unit)
+      if (moveTarget) {
+        await new Promise(r => setTimeout(r, AI_DELAYS.ACTION))
+        selectHex(moveTarget.q, moveTarget.r)
+        
+        // Note: Movement is handled by selectHex in maneuver phase
+        // But we need to simulate the selection first
+        await new Promise(r => setTimeout(r, 100))
+        selectHex(unit.q, unit.r) // Select unit first
+        await new Promise(r => setTimeout(r, 100))
+        selectHex(moveTarget.q, moveTarget.r) // Then move
+      }
+    }
+  }, [getFactionUnits, evaluateMoveTarget, selectHex])
+  
+  // ===========================================================================
+  // AI TURN EXECUTION
+  // ===========================================================================
+  
+  const executeAITurn = useCallback(async () => {
+    if (isProcessingRef.current) return
+    isProcessingRef.current = true
     
-    const recommendations = {
-      move: null,
-      attack: null,
+    try {
+      if (chronicle?.addEntry) {
+        chronicle.addEntry('system', {
+          message: `${factionData?.name} is taking their turn...`,
+          faction: currentFaction,
+        })
+      }
+      
+      await new Promise(r => setTimeout(r, AI_DELAYS.PHASE_START))
+      
+      // Execute phase based on current phase
+      switch (phase) {
+        case PHASES.COMMAND:
+          await executeCommandPhase()
+          break
+        case PHASES.CONFLICT:
+          await executeConflictPhase()
+          break
+        case PHASES.MANEUVER:
+          await executeManeuverPhase()
+          break
+      }
+      
+      await new Promise(r => setTimeout(r, AI_DELAYS.PHASE_END))
+      
+      // Advance to next phase
+      advancePhase()
+      
+    } finally {
+      isProcessingRef.current = false
+    }
+  }, [
+    phase,
+    executeCommandPhase,
+    executeConflictPhase,
+    executeManeuverPhase,
+    advancePhase,
+    factionData,
+    currentFaction,
+    chronicle,
+  ])
+  
+  // ===========================================================================
+  // EFFECT: Trigger AI turn
+  // ===========================================================================
+  
+  useEffect(() => {
+    // Clear any existing timeout
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current)
+      timeoutRef.current = null
     }
     
-    if (validMoves.length > 0) {
-      recommendations.move = findBestMove(unit, validMoves, state, faction)
-    }
+    // Only run for AI turns
+    if (!isAITurn || !aiThinking) return
     
-    if (validAttacks.length > 0) {
-      recommendations.attack = findBestTarget(unit, validAttacks, state, faction)
-    }
+    // Delay before starting AI actions
+    timeoutRef.current = setTimeout(() => {
+      executeAITurn()
+    }, AI_DELAYS.PHASE_START)
     
-    return recommendations
-  }, [state])
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+      }
+    }
+  }, [isAITurn, aiThinking, phase, currentFaction, executeAITurn])
   
   return {
-    processAITurn,
-    processAllAI,
-    getRecommendation,
-    isProcessing: processingRef.current,
+    isAITurn,
+    factionData,
   }
-}
-
-// Helper functions for AI calculations
-function calculateValidMovesForAI(state, unit) {
-  if (!unit || unit.movedThisTurn) return []
-  
-  const { mapData, units } = state
-  const movement = unit.stats.movement
-  const validMoves = []
-  
-  const visited = new Set()
-  const queue = [{ q: unit.q, r: unit.r, remaining: movement }]
-  visited.add(hexId(unit.q, unit.r))
-  
-  while (queue.length > 0) {
-    const current = queue.shift()
-    const neighbors = getHexNeighbors(current.q, current.r)
-    
-    for (const neighbor of neighbors) {
-      const nId = hexId(neighbor.q, neighbor.r)
-      if (visited.has(nId)) continue
-      
-      const hex = mapData[nId]
-      if (!hex) continue
-      
-      const hasUnit = units.find(u => 
-        u.q === neighbor.q && u.r === neighbor.r && u.id !== unit.id
-      )
-      if (hasUnit) continue
-      
-      const moveCost = 1
-      
-      if (current.remaining >= moveCost) {
-        visited.add(nId)
-        validMoves.push({ q: neighbor.q, r: neighbor.r })
-        
-        if (current.remaining > moveCost) {
-          queue.push({ 
-            q: neighbor.q, 
-            r: neighbor.r, 
-            remaining: current.remaining - moveCost 
-          })
-        }
-      }
-    }
-  }
-  
-  return validMoves
-}
-
-function calculateValidAttacksForAI(state, unit) {
-  if (!unit || unit.attackedThisTurn) return []
-  
-  const { units, relations } = state
-  const range = unit.stats.range || 1
-  const validAttacks = []
-  
-  units.forEach(target => {
-    if (target.owner === unit.owner) return
-    
-    // Check relations - can't attack allied factions
-    const relation = relations[unit.owner]?.[target.owner] || 'neutral'
-    if (relation === 'allied') return
-    
-    const dist = hexDistance(unit.q, unit.r, target.q, target.r)
-    if (dist <= range) {
-      validAttacks.push({ 
-        q: target.q, 
-        r: target.r, 
-        targetId: target.id,
-        distance: dist
-      })
-    }
-  })
-  
-  return validAttacks
 }
 
 export default useAI

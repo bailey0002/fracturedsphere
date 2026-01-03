@@ -1,13 +1,13 @@
 // Combat resolution system for The Fractured Sphere
 
 import { UNITS, DOCTRINES, VETERANCY_LEVELS, getVeterancyLevel } from '../data/units'
-import { TERRAIN_TYPES, BUILDINGS, calculateTerrainBonus } from '../data/terrain'
+import { TERRAIN_TYPES, calculateTerrainBonus } from '../data/terrain'
 import { FACTIONS } from '../data/factions'
 
 /**
  * Calculate the effective combat strength of a unit
  */
-export function calculateUnitStrength(unit, doctrine = null, terrain = null, isAttacker = true, hexBuildings = []) {
+export function calculateUnitStrength(unit, doctrine = null, terrain = null, isAttacker = true) {
   const unitDef = UNITS[unit.type]
   if (!unitDef) return { attack: 0, defense: 0 }
   
@@ -49,16 +49,6 @@ export function calculateUnitStrength(unit, doctrine = null, terrain = null, isA
         if (branchBonus.attack) attack *= (1 + branchBonus.attack)
       }
     }
-  }
-  
-  // Apply building modifiers (fortress defense bonus for defenders)
-  if (!isAttacker && hexBuildings && hexBuildings.length > 0) {
-    hexBuildings.forEach(buildingId => {
-      const building = BUILDINGS[buildingId]
-      if (building?.effects?.defenseBonus) {
-        defense *= (1 + building.effects.defenseBonus)
-      }
-    })
   }
   
   // Apply faction bonuses
@@ -105,10 +95,10 @@ export function calculateDoctrineAdvantage(attackerDoctrine, defenderDoctrine) {
 /**
  * Preview combat outcome without applying it
  */
-export function previewCombat(attacker, defender, attackerDoctrine, defenderDoctrine, terrain, hexBuildings = []) {
+export function previewCombat(attacker, defender, attackerDoctrine, defenderDoctrine, terrain) {
   // Calculate effective strengths
-  const attackerStrength = calculateUnitStrength(attacker, attackerDoctrine, terrain, true, [])
-  const defenderStrength = calculateUnitStrength(defender, defenderDoctrine, terrain, false, hexBuildings)
+  const attackerStrength = calculateUnitStrength(attacker, attackerDoctrine, terrain, true)
+  const defenderStrength = calculateUnitStrength(defender, defenderDoctrine, terrain, false)
   
   // Calculate doctrine advantage
   const doctrineAdvantage = calculateDoctrineAdvantage(attackerDoctrine, defenderDoctrine)

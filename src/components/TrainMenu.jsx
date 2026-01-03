@@ -1,246 +1,329 @@
-// Unit training menu for production phase
+// TrainMenu - Unit training popup for The Fractured Sphere
+// Shows available units to train at selected hex (requires capital or academy)
 
 import { useMemo } from 'react'
 import { UNITS, UNIT_BRANCHES, getBranchColor } from '../data/units'
 import { BUILDINGS } from '../data/terrain'
-import { getResourceColor } from '../data/terrain'
-import { getBranchImage, getResourceImage } from '../assets'
+import { FACTIONS } from '../data/factions'
 
-export default function TrainMenu({ 
-  hex, 
-  playerResources, 
-  trainingQueue, 
-  onTrain, 
-  onClose 
+export default function TrainMenu({
+  hex,
+  resources,
+  playerFaction,
+  trainingQueue = [],
+  units = [],
+  onTrain,
+  onClose,
 }) {
-  if (!hex) return null
+  const faction = playerFaction ? FACTIONS[playerFaction] : null
   
-  const existingBuildings = hex.buildings || []
-  const queuedHere = trainingQueue.filter(t => t.hexId === `${hex.q},${hex.r}`)
+  // Determine training capability
+  const trainingInfo = useMemo(() => {
+    if (!hex) return { canTrain: false, buildings: [] }
+    
+    const isCapital = hex.isCapital
+    const hasAcademy = hex.buildings?.includes('academy')
+    const hasFortress = hex.buildings?.includes('fortress')
+    
+    return {
+      canTrain: isCapital || hasAcademy || hasFortress,
+      isCapital,
+      hasAcademy,
+      hasFortress,
+      trainTimeBonus: hasAcademy ? 0.25 : 0, // Academy reduces train time
+      veterancyBonus: hasAcademy, // Academy units start with XP bonus
+    }
+  }, [hex])
   
-  // Determine which units can be trained based on buildings
+  // Calculate available units
   const availableUnits = useMemo(() => {
-    return Object.entries(UNITS).map(([id, unit]) => {
-      // Check resource costs
-      const canAfford = Object.entries(unit.cost).every(
-        ([resource, amount]) => (playerResources[resource] || 0) >= amount
-      )
+    if (!trainingInfo.canTrain) return []
+    
+    // Check if there's already a unit on this hex
+    const hexHasUnit = units.some(u => u.q === hex.q && u.r === hex.r)
+    
+    // Check if already training at this location
+    const alreadyTrainingHere = trainingQueue.some(
+      q => q.q === hex.q && q.r === hex.r
+    )
+    
+    return Object.values(UNITS).map(unit => {
+      // Check resources
+      const canAffordGold = resources.gold >= unit.cost.gold
+      const canAffordIron = resources.iron >= unit.cost.iron
+      const canAfford = canAffordGold && canAffordIron
       
-      // Check building requirements
-      const requiresAcademy = unit.trainTime > 2 || 
-        unit.stats.attack > 15 || 
-        ['elite_infantry', 'commando', 'artillery'].includes(id)
+      // Calculate effective train time with bonuses
+      const baseTime = unit.trainTime
+      const effectiveTime = trainingInfo.trainTimeBonus > 0
+        ? Math.max(1, Math.ceil(baseTime * (1 - trainingInfo.trainTimeBonus)))
+        : baseTime
       
-      const hasAcademy = existingBuildings.includes('academy')
-      const meetsRequirements = !requiresAcademy || hasAcademy
-      
-      // Check if hex has units (one unit per hex for simplicity)
-      // We could expand this with garrison capacity later
-      
-      const available = canAfford && meetsRequirements
-      
-      let reason = null
-      if (!meetsRequirements) reason = 'Requires War Academy'
-      else if (!canAfford) reason = 'Insufficient resources'
+      // Determine availability
+      const available = canAfford && !alreadyTrainingHere
+      const reason = alreadyTrainingHere ? 'Queue full' :
+                     !canAffordGold ? 'Need gold' :
+                     !canAffordIron ? 'Need iron' : null
       
       return {
-        id,
         ...unit,
         available,
         reason,
         canAfford,
-        requiresAcademy,
+        effectiveTime,
+        startsWithBonus: trainingInfo.veterancyBonus,
       }
     })
-  }, [hex, playerResources, existingBuildings])
+  }, [trainingInfo, resources, trainingQueue, units, hex])
   
-  // Group by branch
+  // Group units by branch
   const unitsByBranch = useMemo(() => {
-    const grouped = {}
+    const grouped = {
+      [UNIT_BRANCHES.GROUND]: [],
+      [UNIT_BRANCHES.AIR]: [],
+      [UNIT_BRANCHES.ARMOR]: [],
+    }
+    
     availableUnits.forEach(unit => {
-      const branch = unit.branch || 'ground'
-      if (!grouped[branch]) grouped[branch] = []
-      grouped[branch].push(unit)
+      if (grouped[unit.branch]) {
+        grouped[unit.branch].push(unit)
+      }
     })
+    
     return grouped
   }, [availableUnits])
   
-  const trainableCount = availableUnits.filter(u => u.available).length
+  // Handle train selection
+  const handleTrain = (unit) => {
+    if (!unit.available) return
+    onTrain(unit.id, hex.q, hex.r, playerFaction)
+    onClose()
+  }
   
-  return (
-    <div className="bg-steel-darker border border-steel-light/20 rounded-lg p-4 w-80">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="font-display text-sm tracking-wider uppercase text-steel-bright">
-          Train Units
-        </h3>
-        <button 
-          onClick={onClose}
-          className="text-steel-light/50 hover:text-steel-light transition-colors text-lg"
-        >
-          ×
-        </button>
-      </div>
-      
-      {/* Training queue for this hex */}
-      {queuedHere.length > 0 && (
-        <div className="mb-4">
-          <div className="text-xs text-steel-light/50 uppercase tracking-wider mb-2">
-            In Training
-          </div>
-          {queuedHere.map((q, i) => {
-            const u = UNITS[q.unitType]
-            const branchImage = getBranchImage(u?.branch)
-            return (
-              <div 
-                key={i}
-                className="flex items-center justify-between p-2 bg-primary/10 border border-primary/30 rounded mb-1"
-              >
-                <span className="text-sm text-primary flex items-center gap-2">
-                  {branchImage && <img src={branchImage} alt="" className="w-5 h-5 object-contain" />}
-                  {u?.name || q.unitType}
-                </span>
-                <span className="text-xs text-steel-light/70">
-                  {q.turnsRemaining} turn{q.turnsRemaining !== 1 ? 's' : ''} left
-                </span>
-              </div>
-            )
-          })}
-        </div>
-      )}
-      
-      {/* Units by branch */}
-      {Object.entries(unitsByBranch).map(([branch, units]) => {
-        const branchImage = getBranchImage(branch)
-        return (
-          <div key={branch} className="mb-4">
-            <div 
-              className="text-xs uppercase tracking-wider mb-2 flex items-center gap-2"
-              style={{ color: getBranchColor(branch) }}
-            >
-              {branchImage ? (
-                <img src={branchImage} alt={branch} className="w-5 h-5 object-contain" />
-              ) : (
-                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: getBranchColor(branch) }} />
-              )}
-              {branch}
-            </div>
-            
-            <div className="space-y-2">
-              {units.map(unit => (
-                <UnitOption
-                  key={unit.id}
-                  unit={unit}
-                  onTrain={() => onTrain(unit.id)}
-                />
-              ))}
-            </div>
-          </div>
-        )
-      })}
-      
-      {trainableCount === 0 && (
-        <div className="text-sm text-steel-light/50 italic text-center py-4">
-          No units available for training.
-          {!existingBuildings.includes('academy') && (
-            <div className="mt-2 text-xs">
-              Build a War Academy for advanced units.
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// Individual unit option
-function UnitOption({ unit, onTrain }) {
-  const disabled = !unit.available
-  const branchImage = getBranchImage(unit.branch)
+  if (!hex) return null
   
   return (
     <div 
-      className={`
-        group p-3 rounded border transition-all
-        ${disabled 
-          ? 'bg-steel/10 border-steel-light/5 opacity-50 cursor-not-allowed' 
-          : 'bg-steel/20 hover:bg-steel/30 border-steel-light/10 hover:border-primary/30 cursor-pointer'
-        }
-      `}
-      onClick={disabled ? undefined : onTrain}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-void-950/80 backdrop-blur-sm"
+      onPointerUp={(e) => e.target === e.currentTarget && onClose()}
+      style={{ touchAction: 'manipulation' }}
     >
-      {/* Name and train time */}
-      <div className="flex items-center justify-between mb-1">
-        <div className="flex items-center gap-2">
-          {branchImage && (
-            <img src={branchImage} alt={unit.branch} className="w-6 h-6 object-contain" />
+      <div 
+        className="w-full max-w-md mx-4 bg-void-900 border border-steel-light/20 rounded-lg shadow-2xl overflow-hidden"
+        style={{ maxHeight: '85vh' }}
+      >
+        {/* Header */}
+        <div 
+          className="px-4 py-3 border-b border-steel-light/20"
+          style={{ backgroundColor: faction?.color + '20' }}
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-display tracking-wider text-steel-bright">
+                Train Units
+              </h2>
+              <div className="flex items-center gap-2 text-xs text-steel-light/60">
+                <span>Grid {hex.q},{hex.r}</span>
+                {trainingInfo.isCapital && (
+                  <span className="text-amber-400">★ Capital</span>
+                )}
+                {trainingInfo.hasAcademy && (
+                  <span className="text-blue-400">⚔ Academy</span>
+                )}
+              </div>
+            </div>
+            <button
+              onPointerUp={onClose}
+              className="w-8 h-8 flex items-center justify-center text-steel-light/60 
+                         hover:text-steel-bright hover:bg-steel-light/10 rounded"
+              style={{ touchAction: 'manipulation' }}
+            >
+              ✕
+            </button>
+          </div>
+          
+          {/* Current resources */}
+          <div className="flex items-center gap-4 mt-2 text-xs">
+            <span className="text-amber-400">◈ {resources.gold}</span>
+            <span className="text-steel-light">⬡ {resources.iron}</span>
+            <span className="text-green-400">❋ {resources.grain}</span>
+          </div>
+          
+          {/* Training bonuses */}
+          {(trainingInfo.trainTimeBonus > 0 || trainingInfo.veterancyBonus) && (
+            <div className="flex items-center gap-3 mt-2 text-xs text-blue-400/80">
+              {trainingInfo.trainTimeBonus > 0 && (
+                <span>🏛 -{Math.round(trainingInfo.trainTimeBonus * 100)}% train time</span>
+              )}
+              {trainingInfo.veterancyBonus && (
+                <span>⭐ Units start trained</span>
+              )}
+            </div>
           )}
-          <span className={`font-display text-sm ${disabled ? 'text-steel-light/50' : 'text-steel-bright group-hover:text-primary'} transition-colors`}>
-            {unit.name}
-          </span>
-        </div>
-        <span className="text-xs text-steel-light/50">
-          {unit.trainTime} turn{unit.trainTime !== 1 ? 's' : ''}
-        </span>
-      </div>
-      
-      {/* Stats */}
-      <div className="flex items-center gap-3 text-[10px] font-mono text-steel-light/70 mb-2">
-        <span>ATK: {unit.stats.attack}</span>
-        <span>DEF: {unit.stats.defense}</span>
-        <span>MOV: {unit.stats.movement}</span>
-      </div>
-      
-      {/* Description */}
-      <p className="text-xs text-steel-light/60 mb-2">
-        {unit.description}
-      </p>
-      
-      {/* Costs */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          {Object.entries(unit.cost).map(([resource, amount]) => (
-            <ResourceCost key={resource} resource={resource} amount={amount} />
-          ))}
         </div>
         
-        {unit.reason && (
-          <span className="text-[10px] text-danger">{unit.reason}</span>
-        )}
-      </div>
-      
-      {/* Requirements indicator */}
-      {unit.requiresAcademy && (
-        <div className="mt-2 text-[10px] text-accent/70">
-          ★ Requires War Academy
+        {/* Unit list by branch */}
+        <div 
+          className="p-3 space-y-4 overflow-y-auto"
+          style={{ 
+            maxHeight: '65vh',
+            WebkitOverflowScrolling: 'touch',
+          }}
+        >
+          {!trainingInfo.canTrain ? (
+            <div className="text-center py-8 text-steel-light/50">
+              <p className="mb-2">Cannot train units here</p>
+              <p className="text-xs">Requires Capital, Academy, or Fortress</p>
+            </div>
+          ) : (
+            Object.entries(unitsByBranch).map(([branch, branchUnits]) => (
+              branchUnits.length > 0 && (
+                <div key={branch}>
+                  <div 
+                    className="flex items-center gap-2 mb-2 text-xs font-display tracking-wider"
+                    style={{ color: getBranchColor(branch) }}
+                  >
+                    <span>{getBranchIcon(branch)}</span>
+                    <span>{getBranchName(branch)}</span>
+                  </div>
+                  <div className="space-y-2">
+                    {branchUnits.map((unit) => (
+                      <UnitCard
+                        key={unit.id}
+                        unit={unit}
+                        onSelect={() => handleTrain(unit)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )
+            ))
+          )}
         </div>
-      )}
+        
+        {/* Footer */}
+        <div className="px-4 py-3 border-t border-steel-light/20 bg-void-950/50">
+          <button
+            onPointerUp={onClose}
+            className="w-full py-2 text-sm text-steel-light/60 hover:text-steel-light
+                       border border-steel-light/20 hover:border-steel-light/40 rounded
+                       transition-colors"
+            style={{ touchAction: 'manipulation' }}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
 
-// Resource cost display
-function ResourceCost({ resource, amount }) {
-  const color = getResourceColor(resource)
-  const image = getResourceImage(resource)
-  const icons = {
-    gold: '●',
-    iron: '◆',
-    grain: '▲',
-    influence: '★',
-  }
+// Individual unit card
+function UnitCard({ unit, onSelect }) {
+  const { available, reason, canAfford, effectiveTime, startsWithBonus } = unit
+  const branchColor = getBranchColor(unit.branch)
   
   return (
-    <span 
-      className="text-xs font-mono flex items-center gap-1"
-      style={{ color }}
+    <div
+      className={`
+        p-3 rounded border transition-all duration-200
+        ${available 
+          ? 'border-steel-light/30 hover:border-green-500/50 hover:bg-green-500/5 cursor-pointer' 
+          : 'border-steel-light/10 opacity-60'}
+      `}
+      onPointerUp={available ? onSelect : undefined}
+      style={{ touchAction: 'manipulation' }}
     >
-      {image ? (
-        <img src={image} alt={resource} className="w-4 h-4 object-contain" />
-      ) : (
-        <span>{icons[resource] || '•'}</span>
-      )}
-      {amount}
-    </span>
+      <div className="flex items-start gap-3">
+        {/* Unit icon */}
+        <div 
+          className="flex-shrink-0 w-12 h-12 rounded flex items-center justify-center"
+          style={{ backgroundColor: branchColor + '20' }}
+        >
+          <svg viewBox="0 0 100 100" className="w-8 h-8">
+            <path 
+              d={unit.svgPath} 
+              fill={available ? branchColor : '#4a4a5a'}
+              opacity={available ? 1 : 0.5}
+            />
+          </svg>
+        </div>
+        
+        {/* Unit info */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-display text-steel-bright truncate">
+              {unit.name}
+            </h3>
+            {!available && reason && (
+              <span className="text-xs text-red-400/80 ml-2">
+                {reason}
+              </span>
+            )}
+          </div>
+          
+          <p className="text-xs text-steel-light/60 mt-0.5 line-clamp-1">
+            {unit.description}
+          </p>
+          
+          {/* Stats */}
+          <div className="flex items-center gap-3 mt-2 text-xs">
+            <span className="text-red-400">⚔ {unit.stats.attack}</span>
+            <span className="text-blue-400">🛡 {unit.stats.defense}</span>
+            <span className="text-green-400">→ {unit.stats.movement}</span>
+            {unit.stats.range && unit.stats.range > 1 && (
+              <span className="text-amber-400">◎ {unit.stats.range}</span>
+            )}
+          </div>
+          
+          {/* Cost and time */}
+          <div className="flex items-center justify-between mt-2">
+            <div className="flex items-center gap-2 text-xs">
+              <span className={canAfford ? 'text-amber-400' : 'text-red-400'}>
+                ◈ {unit.cost.gold}
+              </span>
+              <span className={canAfford ? 'text-steel-light' : 'text-red-400'}>
+                ⬡ {unit.cost.iron}
+              </span>
+            </div>
+            
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-steel-light/50">
+                ⏱ {effectiveTime} {effectiveTime === 1 ? 'turn' : 'turns'}
+              </span>
+              {startsWithBonus && (
+                <span className="text-amber-400" title="Starts as Trained">
+                  ◐
+                </span>
+              )}
+            </div>
+          </div>
+          
+          {/* Upkeep */}
+          <div className="text-xs text-steel-light/40 mt-1">
+            Upkeep: {unit.upkeep.gold}◈/turn
+          </div>
+        </div>
+      </div>
+    </div>
   )
+}
+
+// Helper functions
+function getBranchIcon(branch) {
+  switch (branch) {
+    case UNIT_BRANCHES.GROUND: return '🚶'
+    case UNIT_BRANCHES.AIR: return '✈'
+    case UNIT_BRANCHES.ARMOR: return '🛡'
+    default: return '•'
+  }
+}
+
+function getBranchName(branch) {
+  switch (branch) {
+    case UNIT_BRANCHES.GROUND: return 'GROUND FORCES'
+    case UNIT_BRANCHES.AIR: return 'AIR FORCES'
+    case UNIT_BRANCHES.ARMOR: return 'ARMORED FORCES'
+    default: return 'UNKNOWN'
+  }
 }

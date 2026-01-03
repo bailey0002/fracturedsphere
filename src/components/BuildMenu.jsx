@@ -1,300 +1,244 @@
-// Building construction menu for production phase
+// BuildMenu - Building construction popup for The Fractured Sphere
+// Shows available buildings for selected hex with costs and effects
 
 import { useMemo } from 'react'
-import { BUILDINGS, TERRAIN_TYPES, canBuildOnTerrain, getResourceColor } from '../data/terrain'
-import { getBuildingImage, getResourceImage } from '../assets'
+import { BUILDINGS, TERRAIN_TYPES, canBuildOnTerrain } from '../data/terrain'
+import { FACTIONS } from '../data/factions'
 
-export default function BuildMenu({ 
-  hex, 
-  playerResources, 
-  buildingQueue, 
-  onBuild, 
-  onClose 
+export default function BuildMenu({
+  hex,
+  resources,
+  playerFaction,
+  buildingQueue = [],
+  onBuild,
+  onClose,
 }) {
-  if (!hex) return null
+  // Get terrain type
+  const terrain = hex ? TERRAIN_TYPES[hex.terrain] : null
+  const faction = playerFaction ? FACTIONS[playerFaction] : null
   
-  const terrain = TERRAIN_TYPES[hex.terrain]
-  const existingBuildings = hex.buildings || []
-  const queuedHere = buildingQueue.filter(b => b.hexId === `${hex.q},${hex.r}`)
-  
-  // Calculate available buildings
+  // Calculate available buildings for this terrain
   const availableBuildings = useMemo(() => {
-    return Object.entries(BUILDINGS).map(([id, building]) => {
-      // Check terrain compatibility
-      const canBuildHere = canBuildOnTerrain(id, hex.terrain)
-      
-      // Check if building already exists
-      const alreadyBuilt = existingBuildings.includes(id)
-      
-      // Check if already in queue for this hex
-      const inQueue = queuedHere.some(q => q.buildingType === id)
-      
-      // Check resource costs
-      const canAfford = Object.entries(building.cost).every(
-        ([resource, amount]) => (playerResources[resource] || 0) >= amount
-      )
-      
-      // Check terrain requirements (e.g., port requires coastal)
-      const meetsRequirements = !building.requirements?.terrain || 
-        building.requirements.terrain.includes(hex.terrain)
-      
-      const available = canBuildHere && !alreadyBuilt && !inQueue && canAfford && meetsRequirements
-      
-      let reason = null
-      if (!canBuildHere) reason = `Cannot build on ${terrain?.name || hex.terrain}`
-      else if (alreadyBuilt) reason = 'Already built'
-      else if (inQueue) reason = 'Under construction'
-      else if (!meetsRequirements) reason = 'Wrong terrain type'
-      else if (!canAfford) reason = 'Insufficient resources'
-      
-      return {
-        id,
-        ...building,
-        available,
-        reason,
-        canAfford,
-      }
-    })
-  }, [hex, playerResources, existingBuildings, queuedHere])
+    if (!terrain || !terrain.canBuild) return []
+    
+    return terrain.canBuild
+      .map(id => BUILDINGS[id])
+      .filter(Boolean)
+      .map(building => {
+        // Check if already built on this hex
+        const alreadyBuilt = hex.buildings?.includes(building.id)
+        
+        // Check if at max for this territory
+        const builtCount = hex.buildings?.filter(b => b === building.id).length || 0
+        const atMax = building.maxPerTerritory && builtCount >= building.maxPerTerritory
+        
+        // Check if in queue for this hex
+        const inQueue = buildingQueue.some(
+          q => q.buildingId === building.id && q.q === hex.q && q.r === hex.r
+        )
+        
+        // Check resources
+        const canAffordGold = resources.gold >= building.cost.gold
+        const canAffordIron = resources.iron >= building.cost.iron
+        const canAfford = canAffordGold && canAffordIron
+        
+        // Determine availability
+        const available = canAfford && !alreadyBuilt && !atMax && !inQueue
+        const reason = alreadyBuilt ? 'Already built' :
+                       atMax ? 'Max reached' :
+                       inQueue ? 'In queue' :
+                       !canAffordGold ? 'Need gold' :
+                       !canAffordIron ? 'Need iron' : null
+        
+        return {
+          ...building,
+          available,
+          reason,
+          canAfford,
+        }
+      })
+  }, [terrain, hex, resources, buildingQueue])
   
-  // Group buildings by availability
-  const buildable = availableBuildings.filter(b => b.available)
-  const unavailable = availableBuildings.filter(b => !b.available)
+  // Handle build selection
+  const handleBuild = (building) => {
+    if (!building.available) return
+    onBuild(building.id, hex.q, hex.r, playerFaction)
+    onClose()
+  }
   
-  return (
-    <div className="bg-steel-darker border border-steel-light/20 rounded-lg p-4 w-80">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="font-display text-sm tracking-wider uppercase text-steel-bright">
-          Build Structure
-        </h3>
-        <button 
-          onClick={onClose}
-          className="text-steel-light/50 hover:text-steel-light transition-colors text-lg"
-        >
-          ×
-        </button>
-      </div>
-      
-      {/* Location */}
-      <div className="text-xs text-steel-light/70 mb-4">
-        <span className="text-steel-light">{terrain?.name || hex.terrain}</span>
-        {' '}at ({hex.q}, {hex.r})
-      </div>
-      
-      {/* Current buildings */}
-      {existingBuildings.length > 0 && (
-        <div className="mb-4">
-          <div className="text-xs text-steel-light/50 uppercase tracking-wider mb-2">
-            Existing Structures
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {existingBuildings.map(bId => {
-              const b = BUILDINGS[bId]
-              const bImage = getBuildingImage(bId)
-              return (
-                <span 
-                  key={bId}
-                  className="px-2 py-1 bg-steel/30 rounded text-xs text-steel-bright flex items-center gap-1"
-                >
-                  {bImage && <img src={bImage} alt="" className="w-4 h-4 object-contain" />}
-                  {b?.name || bId}
-                </span>
-              )
-            })}
-          </div>
-        </div>
-      )}
-      
-      {/* Queue for this hex */}
-      {queuedHere.length > 0 && (
-        <div className="mb-4">
-          <div className="text-xs text-steel-light/50 uppercase tracking-wider mb-2">
-            Under Construction
-          </div>
-          {queuedHere.map((q, i) => {
-            const b = BUILDINGS[q.buildingType]
-            const bImage = getBuildingImage(q.buildingType)
-            return (
-              <div 
-                key={i}
-                className="flex items-center justify-between p-2 bg-warning/10 border border-warning/30 rounded mb-1"
-              >
-                <span className="text-sm text-warning flex items-center gap-2">
-                  {bImage && <img src={bImage} alt="" className="w-5 h-5 object-contain" />}
-                  {b?.name || q.buildingType}
-                </span>
-                <span className="text-xs text-steel-light/70">
-                  {q.turnsRemaining} turn{q.turnsRemaining !== 1 ? 's' : ''} left
-                </span>
-              </div>
-            )
-          })}
-        </div>
-      )}
-      
-      {/* Available buildings */}
-      {buildable.length > 0 ? (
-        <div className="space-y-2 mb-4">
-          <div className="text-xs text-steel-light/50 uppercase tracking-wider mb-2">
-            Available to Build
-          </div>
-          {buildable.map(building => (
-            <BuildingOption
-              key={building.id}
-              building={building}
-              onBuild={() => onBuild(building.id)}
-            />
-          ))}
-        </div>
-      ) : (
-        <div className="text-sm text-steel-light/50 italic mb-4">
-          No structures available to build here.
-        </div>
-      )}
-      
-      {/* Unavailable buildings - collapsed by default */}
-      {unavailable.length > 0 && (
-        <details className="group">
-          <summary className="text-xs text-steel-light/40 cursor-pointer hover:text-steel-light/60 transition-colors">
-            {unavailable.length} structure{unavailable.length !== 1 ? 's' : ''} unavailable
-          </summary>
-          <div className="mt-2 space-y-1">
-            {unavailable.map(building => {
-              const bImage = getBuildingImage(building.id)
-              return (
-                <div 
-                  key={building.id}
-                  className="flex items-center justify-between p-2 bg-steel/10 rounded opacity-50"
-                >
-                  <span className="text-xs text-steel-light flex items-center gap-2">
-                    {bImage && <img src={bImage} alt="" className="w-4 h-4 object-contain opacity-50" />}
-                    {building.name}
-                  </span>
-                  <span className="text-xs text-steel-light/50">{building.reason}</span>
-                </div>
-              )
-            })}
-          </div>
-        </details>
-      )}
-    </div>
-  )
-}
-
-// Individual building option
-function BuildingOption({ building, onBuild }) {
-  const buildingImage = getBuildingImage(building.id)
+  if (!hex || !terrain) return null
   
   return (
     <div 
-      className="group p-3 bg-steel/20 hover:bg-steel/30 border border-steel-light/10 
-                 hover:border-primary/30 rounded cursor-pointer transition-all"
-      onClick={onBuild}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-void-950/80 backdrop-blur-sm"
+      onPointerUp={(e) => e.target === e.currentTarget && onClose()}
+      style={{ touchAction: 'manipulation' }}
     >
-      {/* Name and build time */}
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          {buildingImage && (
-            <img src={buildingImage} alt="" className="w-8 h-8 object-contain drop-shadow-md" />
-          )}
-          <span className="font-display text-sm text-steel-bright group-hover:text-primary transition-colors">
-            {building.name}
-          </span>
-        </div>
-        <span className="text-xs text-steel-light/50">
-          {building.buildTime} turn{building.buildTime !== 1 ? 's' : ''}
-        </span>
-      </div>
-      
-      {/* Description */}
-      <p className="text-xs text-steel-light/70 mb-2">
-        {building.description}
-      </p>
-      
-      {/* Costs */}
-      <div className="flex items-center gap-3">
-        {Object.entries(building.cost).map(([resource, amount]) => (
-          <ResourceCost key={resource} resource={resource} amount={amount} />
-        ))}
-      </div>
-      
-      {/* Production/Effects */}
-      {(Object.keys(building.production || {}).length > 0 || 
-        Object.keys(building.effects || {}).length > 0) && (
-        <div className="mt-2 pt-2 border-t border-steel-light/10">
-          <div className="flex flex-wrap gap-2">
-            {Object.entries(building.production || {}).map(([resource, amount]) => (
-              <span 
-                key={resource}
-                className="text-xs px-1.5 py-0.5 rounded flex items-center gap-1"
-                style={{ 
-                  backgroundColor: `${getResourceColor(resource)}20`,
-                  color: getResourceColor(resource)
-                }}
-              >
-                {getResourceImage(resource) && (
-                  <img src={getResourceImage(resource)} alt="" className="w-3 h-3 object-contain" />
-                )}
-                +{amount} {resource}/turn
-              </span>
-            ))}
-            {Object.entries(building.effects || {}).map(([effect, value]) => (
-              <span 
-                key={effect}
-                className="text-xs text-accent px-1.5 py-0.5 bg-accent/10 rounded"
-              >
-                {formatEffect(effect, value)}
-              </span>
-            ))}
+      <div 
+        className="w-full max-w-md mx-4 bg-void-900 border border-steel-light/20 rounded-lg shadow-2xl overflow-hidden"
+        style={{ maxHeight: '80vh' }}
+      >
+        {/* Header */}
+        <div 
+          className="px-4 py-3 border-b border-steel-light/20"
+          style={{ backgroundColor: faction?.color + '20' }}
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-display tracking-wider text-steel-bright">
+                Build Structure
+              </h2>
+              <p className="text-xs text-steel-light/60">
+                {terrain.name} • Grid {hex.q},{hex.r}
+              </p>
+            </div>
+            <button
+              onPointerUp={onClose}
+              className="w-8 h-8 flex items-center justify-center text-steel-light/60 
+                         hover:text-steel-bright hover:bg-steel-light/10 rounded"
+              style={{ touchAction: 'manipulation' }}
+            >
+              ✕
+            </button>
+          </div>
+          
+          {/* Current resources */}
+          <div className="flex items-center gap-4 mt-2 text-xs">
+            <span className="text-amber-400">◈ {resources.gold}</span>
+            <span className="text-steel-light">⬡ {resources.iron}</span>
+            <span className="text-green-400">❋ {resources.grain}</span>
           </div>
         </div>
-      )}
+        
+        {/* Building list */}
+        <div 
+          className="p-3 space-y-2 overflow-y-auto"
+          style={{ 
+            maxHeight: '60vh',
+            WebkitOverflowScrolling: 'touch',
+          }}
+        >
+          {availableBuildings.length === 0 ? (
+            <div className="text-center py-8 text-steel-light/50">
+              <p>No buildings available for this terrain</p>
+            </div>
+          ) : (
+            availableBuildings.map((building) => (
+              <BuildingCard
+                key={building.id}
+                building={building}
+                onSelect={() => handleBuild(building)}
+              />
+            ))
+          )}
+        </div>
+        
+        {/* Footer */}
+        <div className="px-4 py-3 border-t border-steel-light/20 bg-void-950/50">
+          <button
+            onPointerUp={onClose}
+            className="w-full py-2 text-sm text-steel-light/60 hover:text-steel-light
+                       border border-steel-light/20 hover:border-steel-light/40 rounded
+                       transition-colors"
+            style={{ touchAction: 'manipulation' }}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
 
-// Resource cost display
-function ResourceCost({ resource, amount }) {
-  const color = getResourceColor(resource)
-  const image = getResourceImage(resource)
-  const icons = {
-    gold: '●',
-    iron: '◆',
-    grain: '▲',
-    influence: '★',
-  }
+// Individual building card
+function BuildingCard({ building, onSelect }) {
+  const { available, reason, canAfford } = building
   
   return (
-    <span 
-      className="text-xs font-mono flex items-center gap-1"
-      style={{ color }}
+    <div
+      className={`
+        p-3 rounded border transition-all duration-200
+        ${available 
+          ? 'border-steel-light/30 hover:border-amber-500/50 hover:bg-amber-500/5 cursor-pointer' 
+          : 'border-steel-light/10 opacity-60'}
+      `}
+      onPointerUp={available ? onSelect : undefined}
+      style={{ touchAction: 'manipulation' }}
     >
-      {image ? (
-        <img src={image} alt={resource} className="w-4 h-4 object-contain" />
-      ) : (
-        <span>{icons[resource] || '•'}</span>
-      )}
-      {amount}
-    </span>
+      <div className="flex items-start gap-3">
+        {/* Building icon */}
+        <div className="flex-shrink-0 w-12 h-12 bg-void-950/50 rounded flex items-center justify-center">
+          <svg viewBox="0 0 100 100" className="w-8 h-8">
+            <path 
+              d={building.svgPath} 
+              fill={available ? '#c4a35a' : '#4a4a5a'}
+              opacity={available ? 1 : 0.5}
+            />
+          </svg>
+        </div>
+        
+        {/* Building info */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-display text-steel-bright truncate">
+              {building.name}
+            </h3>
+            {!available && reason && (
+              <span className="text-xs text-red-400/80 ml-2">
+                {reason}
+              </span>
+            )}
+          </div>
+          
+          <p className="text-xs text-steel-light/60 mt-0.5 line-clamp-2">
+            {building.description}
+          </p>
+          
+          {/* Cost and time */}
+          <div className="flex items-center gap-4 mt-2">
+            {/* Cost */}
+            <div className="flex items-center gap-2 text-xs">
+              <span className={canAfford ? 'text-amber-400' : 'text-red-400'}>
+                ◈ {building.cost.gold}
+              </span>
+              <span className={canAfford ? 'text-steel-light' : 'text-red-400'}>
+                ⬡ {building.cost.iron}
+              </span>
+            </div>
+            
+            {/* Build time */}
+            <div className="text-xs text-steel-light/50">
+              ⏱ {building.buildTime} {building.buildTime === 1 ? 'turn' : 'turns'}
+            </div>
+          </div>
+          
+          {/* Production output */}
+          {building.production && Object.keys(building.production).length > 0 && (
+            <div className="flex items-center gap-2 mt-1.5 text-xs text-green-400/80">
+              <span>Produces:</span>
+              {building.production.gold > 0 && <span>+{building.production.gold}◈</span>}
+              {building.production.iron > 0 && <span>+{building.production.iron}⬡</span>}
+              {building.production.grain > 0 && <span>+{building.production.grain}❋</span>}
+              {building.production.influence > 0 && <span>+{building.production.influence}✦</span>}
+            </div>
+          )}
+          
+          {/* Effects */}
+          {building.effects && Object.keys(building.effects).length > 0 && (
+            <div className="text-xs text-blue-400/70 mt-1">
+              {building.effects.defenseBonus && (
+                <span>+{Math.round(building.effects.defenseBonus * 100)}% defense</span>
+              )}
+              {building.effects.veterancyBonus && (
+                <span>+{Math.round(building.effects.veterancyBonus * 100)}% XP gain</span>
+              )}
+              {building.effects.trainTimeReduction && (
+                <span>-{Math.round(building.effects.trainTimeReduction * 100)}% train time</span>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   )
-}
-
-// Format effect for display
-function formatEffect(effect, value) {
-  const labels = {
-    defenseBonus: `+${Math.round(value * 100)}% defense`,
-    garrisonCapacity: `${value} garrison slots`,
-    veterancyBonus: `+${Math.round(value * 100)}% XP`,
-    trainTimeReduction: `-${Math.round(value * 100)}% train time`,
-    tradeBonus: `+${Math.round(value * 100)}% trade`,
-    enableNaval: 'Enables naval',
-    tradeRoute: 'Trade route access',
-    supplyBonus: `+${Math.round(value * 100)}% supply`,
-    supplyRange: `+${value} supply range`,
-    sightBonus: `+${value} sight`,
-    commandBonus: `+${Math.round(value * 100)}% command`,
-  }
-  
-  return labels[effect] || `${effect}: ${value}`
 }

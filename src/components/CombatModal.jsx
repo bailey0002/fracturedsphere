@@ -1,402 +1,412 @@
-// Combat Modal - Battle preview and resolution UI
+// CombatModal - Combat interface for The Fractured Sphere
+// Shows attacker/defender info, doctrine selection, and combat preview
 
-import { useState, useEffect } from 'react'
-import { UNITS, DOCTRINES, getVeterancyLevel, VETERANCY_LEVELS, getBranchColor } from '../data/units'
-import { TERRAIN_TYPES, BUILDINGS } from '../data/terrain'
+import { useState, useMemo, useCallback } from 'react'
+import { UNITS, DOCTRINES, VETERANCY_LEVELS, getVeterancyLevel } from '../data/units'
+import { TERRAIN_TYPES } from '../data/terrain'
 import { FACTIONS } from '../data/factions'
-import { previewCombat, getAvailableDoctrines, getRecommendedDoctrine } from '../utils/combatResolver'
-import { getFactionImage, getBranchImage, getVeterancyImage, getTerrainImage, getBuildingImage } from '../assets'
+import { 
+  previewCombat, 
+  resolveCombat, 
+  getAvailableDoctrines,
+  getRecommendedDoctrine,
+} from '../utils/combatResolver'
 
-// Unit portrait component
-function UnitPortrait({ unit, isAttacker, faction }) {
-  const unitDef = UNITS[unit.type]
-  const vetLevel = getVeterancyLevel(unit.experience || 0)
-  const branchColor = getBranchColor(unitDef?.branch)
-  const factionImage = getFactionImage(faction?.id)
-  const branchImage = getBranchImage(unitDef?.branch)
-  const vetImage = getVeterancyImage(vetLevel.id)
-  
-  return (
-    <div className={`
-      relative p-4 rounded-lg border-2
-      ${isAttacker ? 'border-red-500/50' : 'border-blue-500/50'}
-      bg-steel/50
-    `}>
-      <div className="absolute top-2 right-2 text-xs font-mono text-steel-light/50">
-        {isAttacker ? 'ATK' : 'DEF'}
-      </div>
-      
-      <div className="flex items-center gap-3 mb-3">
-        {factionImage ? (
-          <img 
-            src={factionImage} 
-            alt={faction?.name}
-            className="w-12 h-12 object-contain drop-shadow-lg"
-          />
-        ) : (
-          <div 
-            className="w-12 h-12 rounded-lg flex items-center justify-center text-2xl"
-            style={{ backgroundColor: faction?.color + '30', borderColor: faction?.color }}
-          >
-            {unitDef?.svgPath ? '⚔' : '●'}
-          </div>
-        )}
-        <div>
-          <div className="font-display text-steel-bright">
-            {unitDef?.name || unit.type}
-          </div>
-          <div className="text-xs" style={{ color: faction?.color }}>
-            {faction?.name}
-          </div>
-        </div>
-      </div>
-      
-      <div className="grid grid-cols-2 gap-2 text-xs mb-3">
-        <div className="flex justify-between">
-          <span className="text-steel-light/60">ATK:</span>
-          <span className="text-red-400 font-mono">{unitDef?.stats.attack}</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-steel-light/60">DEF:</span>
-          <span className="text-blue-400 font-mono">{unitDef?.stats.defense}</span>
-        </div>
-      </div>
-      
-      <div className="flex items-center justify-between text-xs">
-        <div className="flex items-center gap-1">
-          {vetImage ? (
-            <img src={vetImage} alt={vetLevel.name} className="w-5 h-5 object-contain" />
-          ) : (
-            <span className="text-steel-light/60">{vetLevel.icon}</span>
-          )}
-          <span className="text-steel-light/60">{vetLevel.name}</span>
-        </div>
-        <div className="flex items-center gap-1">
-          {branchImage ? (
-            <img src={branchImage} alt={unitDef?.branch} className="w-5 h-5 object-contain" />
-          ) : (
-            <span style={{ color: branchColor }}>{unitDef?.branch}</span>
-          )}
-        </div>
-      </div>
-      
-      {/* Health bar */}
-      <div className="mt-3">
-        <div className="flex justify-between text-xs mb-1">
-          <span className="text-steel-light/60">Health</span>
-          <span className={unit.health < 50 ? 'text-red-400' : 'text-green-400'}>
-            {unit.health}%
-          </span>
-        </div>
-        <div className="h-2 bg-steel-dark rounded overflow-hidden">
-          <div 
-            className={`h-full transition-all ${unit.health < 30 ? 'bg-red-500' : unit.health < 60 ? 'bg-yellow-500' : 'bg-green-500'}`}
-            style={{ width: `${unit.health}%` }}
-          />
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// Doctrine selector
-function DoctrineSelector({ availableDoctrines, selectedDoctrine, onSelect, recommended, disabled }) {
-  return (
-    <div className="grid grid-cols-2 gap-2">
-      {availableDoctrines.map(docId => {
-        const doc = DOCTRINES[docId]
-        if (!doc) return null
-        
-        const isSelected = selectedDoctrine === docId
-        const isRecommended = recommended === docId
-        
-        return (
-          <button
-            key={docId}
-            onClick={() => !disabled && onSelect(docId)}
-            disabled={disabled}
-            className={`
-              p-2 rounded border text-left text-xs transition-all
-              ${isSelected 
-                ? 'border-continuity bg-continuity/20' 
-                : 'border-steel-light/20 bg-steel/30 hover:border-steel-light/40'
-              }
-              ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
-            `}
-          >
-            <div className="flex items-center justify-between mb-1">
-              <span className="font-display uppercase tracking-wide text-steel-bright">
-                {doc.name}
-              </span>
-              {isRecommended && (
-                <span className="text-yellow-400 text-[10px]">★</span>
-              )}
-            </div>
-            <div className="flex gap-2 text-[10px] font-mono">
-              <span className={doc.attackModifier >= 0 ? 'text-green-400' : 'text-red-400'}>
-                ATK: {doc.attackModifier >= 0 ? '+' : ''}{Math.round(doc.attackModifier * 100)}%
-              </span>
-              <span className={doc.defenseModifier >= 0 ? 'text-green-400' : 'text-red-400'}>
-                DEF: {doc.defenseModifier >= 0 ? '+' : ''}{Math.round(doc.defenseModifier * 100)}%
-              </span>
-            </div>
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
-// Combat preview display
-function CombatPreview({ preview }) {
-  if (!preview) return null
-  
-  const { attacker, defender, winProbability, doctrineAdvantage } = preview
-  
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-4">
-        {/* Attacker stats */}
-        <div className="p-3 rounded bg-red-500/10 border border-red-500/30">
-          <div className="text-xs text-red-400 mb-2 font-display">ATTACKER</div>
-          <div className="space-y-1 text-xs font-mono">
-            <div className="flex justify-between">
-              <span className="text-steel-light/60">Force:</span>
-              <span className="text-steel-bright">{attacker.force}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-steel-light/60">Damage:</span>
-              <span className="text-red-400">-{attacker.damageTaken}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-steel-light/60">Result:</span>
-              <span className={attacker.destroyed ? 'text-red-500' : 'text-green-400'}>
-                {attacker.destroyed ? 'DESTROYED' : `${attacker.newHealth}%`}
-              </span>
-            </div>
-          </div>
-        </div>
-        
-        {/* Defender stats */}
-        <div className="p-3 rounded bg-blue-500/10 border border-blue-500/30">
-          <div className="text-xs text-blue-400 mb-2 font-display">DEFENDER</div>
-          <div className="space-y-1 text-xs font-mono">
-            <div className="flex justify-between">
-              <span className="text-steel-light/60">Force:</span>
-              <span className="text-steel-bright">{defender.force}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-steel-light/60">Damage:</span>
-              <span className="text-red-400">-{defender.damageTaken}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-steel-light/60">Result:</span>
-              <span className={defender.destroyed ? 'text-red-500' : 'text-green-400'}>
-                {defender.destroyed ? 'DESTROYED' : `${defender.newHealth}%`}
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-      
-      {/* Win probability bar */}
-      <div>
-        <div className="flex justify-between text-xs mb-1">
-          <span className="text-red-400">Attacker</span>
-          <span className="text-steel-light">{Math.round(winProbability * 100)}%</span>
-          <span className="text-blue-400">Defender</span>
-        </div>
-        <div className="h-3 bg-blue-500/30 rounded overflow-hidden">
-          <div 
-            className="h-full bg-red-500/70 transition-all"
-            style={{ width: `${winProbability * 100}%` }}
-          />
-        </div>
-      </div>
-      
-      {/* Doctrine advantage */}
-      {doctrineAdvantage !== 0 && (
-        <div className="text-center text-xs">
-          <span className={doctrineAdvantage > 0 ? 'text-green-400' : 'text-red-400'}>
-            Doctrine {doctrineAdvantage > 0 ? 'Advantage' : 'Disadvantage'}: {doctrineAdvantage > 0 ? '+' : ''}{Math.round(doctrineAdvantage * 100)}%
-          </span>
-        </div>
-      )}
-    </div>
-  )
-}
-
-// Main CombatModal component
-export default function CombatModal({ 
-  attacker, 
-  defender, 
-  terrain,
-  hexBuildings = [],
-  onResolve, 
-  onCancel 
+export default function CombatModal({
+  attacker,
+  defenders,
+  hex,
+  mapData,
+  playerFaction,
+  onResolve,
+  onCancel,
 }) {
+  // State for selected doctrine
   const [attackerDoctrine, setAttackerDoctrine] = useState('assault')
   const [defenderDoctrine, setDefenderDoctrine] = useState('defensive')
-  const [preview, setPreview] = useState(null)
   const [isResolving, setIsResolving] = useState(false)
-  const [result, setResult] = useState(null)
+  const [combatResult, setCombatResult] = useState(null)
   
-  const attackerFaction = FACTIONS[attacker?.owner]
-  const defenderFaction = FACTIONS[defender?.owner]
-  const terrainData = TERRAIN_TYPES[terrain] || TERRAIN_TYPES.plains
-  const terrainImage = getTerrainImage(terrain)
+  // Get primary defender (for preview)
+  const defender = defenders[0]
   
-  // Check if defender has fortress
-  const hasFortress = hexBuildings?.includes('fortress')
-  const fortressImage = hasFortress ? getBuildingImage('fortress') : null
+  // Get unit definitions
+  const attackerDef = UNITS[attacker?.type]
+  const defenderDef = UNITS[defender?.type]
   
-  // Get available doctrines for each side
-  const attackerDoctrines = getAvailableDoctrines(attacker)
-  const defenderDoctrines = getAvailableDoctrines(defender)
+  // Get factions
+  const attackerFaction = attacker ? FACTIONS[attacker.owner] : null
+  const defenderFaction = defender ? FACTIONS[defender.owner] : null
   
-  // Get recommended doctrines
-  const recommendedAttacker = getRecommendedDoctrine(attacker, defender, terrain, true)
-  const recommendedDefender = getRecommendedDoctrine(defender, attacker, terrain, false)
+  // Get terrain
+  const terrain = hex ? TERRAIN_TYPES[hex.terrain] : null
   
-  // Update preview when doctrines change
-  useEffect(() => {
-    if (attacker && defender) {
-      const combatPreview = previewCombat(
-        attacker, 
-        defender, 
-        attackerDoctrine, 
-        defenderDoctrine, 
-        terrain,
-        hexBuildings
-      )
-      setPreview(combatPreview)
-    }
-  }, [attacker, defender, attackerDoctrine, defenderDoctrine, terrain, hexBuildings])
+  // Is player the attacker?
+  const isPlayerAttacker = attacker?.owner === playerFaction
   
-  const handleResolve = () => {
+  // Get available doctrines for attacker
+  const availableDoctrines = useMemo(() => {
+    if (!attacker) return []
+    return getAvailableDoctrines(attacker)
+  }, [attacker])
+  
+  // Get recommended doctrine
+  const recommendedDoctrine = useMemo(() => {
+    if (!attacker || !defender) return 'assault'
+    return getRecommendedDoctrine(attacker, defender, hex?.terrain, true)
+  }, [attacker, defender, hex])
+  
+  // AI selects doctrine for defender
+  const aiDefenderDoctrine = useMemo(() => {
+    if (!attacker || !defender) return 'defensive'
+    return getRecommendedDoctrine(defender, attacker, hex?.terrain, false)
+  }, [attacker, defender, hex])
+  
+  // Calculate combat preview
+  const preview = useMemo(() => {
+    if (!attacker || !defender) return null
+    
+    const effectiveDefenderDoctrine = isPlayerAttacker ? aiDefenderDoctrine : defenderDoctrine
+    return previewCombat(
+      attacker, 
+      defender, 
+      attackerDoctrine, 
+      effectiveDefenderDoctrine, 
+      hex?.terrain
+    )
+  }, [attacker, defender, attackerDoctrine, defenderDoctrine, aiDefenderDoctrine, hex, isPlayerAttacker])
+  
+  // Handle resolve combat
+  const handleResolve = useCallback(() => {
+    if (!preview || isResolving) return
+    
     setIsResolving(true)
     
-    // Simulate combat resolution delay
+    // Add dramatic pause
     setTimeout(() => {
-      if (onResolve) {
+      const result = resolveCombat(preview)
+      setCombatResult(result)
+      
+      // After showing result, close and apply
+      setTimeout(() => {
         onResolve({
-          attackerDoctrine,
-          defenderDoctrine,
-          preview
+          attacker: {
+            ...result.attacker,
+            unitId: attacker.id,
+          },
+          defender: {
+            ...result.defender,
+            unitId: defender.id,
+          },
+          hexCaptured: result.hexCaptured,
+          hex,
         })
-      }
-    }, 1000)
-  }
+      }, 2000)
+    }, 500)
+  }, [preview, isResolving, attacker, defender, hex, onResolve])
   
   if (!attacker || !defender) return null
   
+  // Get veterancy info
+  const attackerVet = getVeterancyLevel(attacker.experience || 0)
+  const defenderVet = getVeterancyLevel(defender.experience || 0)
+  
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
-      <div className="bg-void-950 border border-steel-light/20 rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center bg-void-950/90 backdrop-blur-sm"
+      style={{ touchAction: 'manipulation' }}
+    >
+      <div 
+        className="w-full max-w-lg mx-4 bg-void-900 border border-red-500/30 rounded-lg shadow-2xl overflow-hidden"
+        style={{ maxHeight: '90vh' }}
+      >
         {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="font-display text-xl tracking-wider text-steel-bright flex items-center gap-2">
-            ⚔ COMBAT
-            {hasFortress && (
-              <span className="flex items-center gap-1 text-sm text-blue-400 font-mono">
-                {fortressImage ? (
-                  <img src={fortressImage} alt="Fortress" className="w-6 h-6 object-contain" />
-                ) : (
-                  '🏰'
-                )}
-                Fortress
-              </span>
-            )}
+        <div className="px-4 py-3 bg-red-500/10 border-b border-red-500/30">
+          <h2 className="text-lg font-display tracking-wider text-red-400 text-center">
+            ⚔ COMBAT ⚔
           </h2>
-          <div className="flex items-center gap-2 text-xs text-steel-light/60">
-            <span>Terrain:</span>
-            {terrainImage ? (
-              <img src={terrainImage} alt={terrainData.name} className="w-6 h-6 rounded object-cover" />
-            ) : null}
-            <span className="text-steel-bright">{terrainData.name}</span>
-            {terrainData.defenseModifier > 0 && (
-              <span className="text-green-400 ml-2">
-                +{Math.round(terrainData.defenseModifier * 100)}% DEF
-              </span>
-            )}
-          </div>
+          {terrain && (
+            <p className="text-xs text-center text-steel-light/60 mt-1">
+              {terrain.name} • Defense +{Math.round(terrain.defenseModifier * 100)}%
+            </p>
+          )}
         </div>
         
-        {!isResolving ? (
-          <>
-            {/* Unit portraits */}
-            <div className="grid grid-cols-2 gap-4 mb-6">
-              <UnitPortrait unit={attacker} isAttacker={true} faction={attackerFaction} />
-              <UnitPortrait unit={defender} isAttacker={false} faction={defenderFaction} />
+        {/* Combatants */}
+        <div className="p-4">
+          <div className="flex gap-4">
+            {/* Attacker */}
+            <UnitCard
+              unit={attacker}
+              unitDef={attackerDef}
+              faction={attackerFaction}
+              veterancy={attackerVet}
+              side="attacker"
+              preview={preview?.attacker}
+              result={combatResult?.attacker}
+            />
+            
+            {/* VS */}
+            <div className="flex-shrink-0 flex items-center">
+              <span className="text-2xl text-red-500 font-bold">VS</span>
             </div>
             
-            {/* Doctrine selection */}
-            <div className="grid grid-cols-2 gap-4 mb-6">
-              <div>
-                <div className="text-xs text-steel-light/60 mb-2 font-display uppercase">
-                  Attacker Doctrine
+            {/* Defender */}
+            <UnitCard
+              unit={defender}
+              unitDef={defenderDef}
+              faction={defenderFaction}
+              veterancy={defenderVet}
+              side="defender"
+              preview={preview?.defender}
+              result={combatResult?.defender}
+            />
+          </div>
+          
+          {/* Combat Preview */}
+          {preview && !combatResult && (
+            <div className="mt-4 p-3 bg-void-950/50 rounded border border-steel-light/10">
+              <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                <div>
+                  <div className="text-steel-light/50">Attack Force</div>
+                  <div className="text-red-400 font-mono text-lg">{preview.attacker.force}</div>
                 </div>
-                <DoctrineSelector 
-                  availableDoctrines={attackerDoctrines}
-                  selectedDoctrine={attackerDoctrine}
-                  onSelect={setAttackerDoctrine}
-                  recommended={recommendedAttacker}
-                />
-              </div>
-              <div>
-                <div className="text-xs text-steel-light/60 mb-2 font-display uppercase">
-                  Defender Doctrine
+                <div>
+                  <div className="text-steel-light/50">Win Chance</div>
+                  <div className={`font-mono text-lg ${preview.winProbability > 50 ? 'text-green-400' : 'text-amber-400'}`}>
+                    {preview.winProbability}%
+                  </div>
                 </div>
-                <DoctrineSelector 
-                  availableDoctrines={defenderDoctrines}
-                  selectedDoctrine={defenderDoctrine}
-                  onSelect={setDefenderDoctrine}
-                  recommended={recommendedDefender}
-                  disabled={true}
-                />
+                <div>
+                  <div className="text-steel-light/50">Defense Force</div>
+                  <div className="text-blue-400 font-mono text-lg">{preview.defender.force}</div>
+                </div>
               </div>
+              
+              {/* Doctrine advantage indicator */}
+              {preview.doctrineAdvantage !== 0 && (
+                <div className={`text-center text-xs mt-2 ${preview.doctrineAdvantage > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {preview.doctrineAdvantage > 0 ? '▲' : '▼'} 
+                  Doctrine {preview.doctrineAdvantage > 0 ? 'advantage' : 'disadvantage'} 
+                  ({Math.abs(Math.round(preview.doctrineAdvantage * 100))}%)
+                </div>
+              )}
             </div>
-            
-            {/* Combat preview */}
-            <div className="mb-6">
-              <div className="text-xs text-steel-light/60 mb-2 font-display uppercase">
-                Battle Forecast
+          )}
+          
+          {/* Combat Result */}
+          {combatResult && (
+            <div className="mt-4 p-4 bg-void-950/50 rounded border border-amber-500/30">
+              <h3 className="text-center font-display text-amber-400 mb-3">
+                COMBAT RESOLVED
+              </h3>
+              
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div className={`text-center ${combatResult.attacker.destroyed ? 'text-red-400' : ''}`}>
+                  <div className="text-steel-light/50 text-xs">Attacker</div>
+                  <div className="font-mono">
+                    -{combatResult.attacker.damageTaken} HP
+                  </div>
+                  {combatResult.attacker.destroyed && (
+                    <div className="text-red-400 text-xs">DESTROYED</div>
+                  )}
+                </div>
+                <div className={`text-center ${combatResult.defender.destroyed ? 'text-red-400' : ''}`}>
+                  <div className="text-steel-light/50 text-xs">Defender</div>
+                  <div className="font-mono">
+                    -{combatResult.defender.damageTaken} HP
+                  </div>
+                  {combatResult.defender.destroyed && (
+                    <div className="text-red-400 text-xs">DESTROYED</div>
+                  )}
+                </div>
               </div>
-              <CombatPreview preview={preview} />
+              
+              {combatResult.hexCaptured && (
+                <div className="text-center text-green-400 mt-3 font-display">
+                  🏴 TERRITORY CAPTURED
+                </div>
+              )}
             </div>
-            
-            {/* Territory capture notice */}
-            {preview?.defender?.destroyed && (
-              <div className="mb-4 p-3 bg-green-500/10 border border-green-500/30 rounded text-center">
-                <span className="text-green-400 text-sm font-display">
-                  ✓ TERRITORY CAPTURED
-                </span>
-              </div>
-            )}
-            
-            {/* Actions */}
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={onCancel}
-                className="btn bg-steel/30 text-steel-light border-steel-light/20 hover:bg-steel/50"
-              >
-                Retreat
-              </button>
-              <button
-                onClick={handleResolve}
-                className="btn bg-red-500/20 text-red-400 border-red-500/30 hover:bg-red-500/30"
-              >
-                Engage
-              </button>
+          )}
+        </div>
+        
+        {/* Doctrine Selection (only if player is attacker and not resolved) */}
+        {isPlayerAttacker && !combatResult && (
+          <div className="px-4 pb-4">
+            <div className="text-xs text-steel-light/50 uppercase tracking-wider mb-2">
+              Select Doctrine
             </div>
-          </>
-        ) : (
-          /* Combat resolution animation */
-          <div className="py-12 text-center">
-            <div className="text-6xl animate-bounce">⚔️</div>
-            <div className="mt-4 font-display text-steel-bright animate-pulse">
-              Resolving Combat...
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {Object.values(DOCTRINES).map((doctrine) => {
+                const isAvailable = availableDoctrines.includes(doctrine.id)
+                const isSelected = attackerDoctrine === doctrine.id
+                const isRecommended = doctrine.id === recommendedDoctrine
+                
+                return (
+                  <button
+                    key={doctrine.id}
+                    onPointerUp={() => isAvailable && setAttackerDoctrine(doctrine.id)}
+                    disabled={!isAvailable || isResolving}
+                    className={`
+                      p-2 rounded border text-left transition-all
+                      ${isSelected 
+                        ? 'border-amber-500 bg-amber-500/20' 
+                        : isAvailable 
+                          ? 'border-steel-light/20 hover:border-steel-light/40 bg-void-950/30'
+                          : 'border-steel-light/10 opacity-40'
+                      }
+                    `}
+                    style={{ touchAction: 'manipulation' }}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className={`text-xs font-display ${isSelected ? 'text-amber-400' : 'text-steel-bright'}`}>
+                        {doctrine.name}
+                      </span>
+                      {isRecommended && (
+                        <span className="text-xs text-green-400">★</span>
+                      )}
+                    </div>
+                    <div className="flex gap-2 mt-1 text-[10px]">
+                      <span className={doctrine.attackModifier >= 0 ? 'text-green-400/70' : 'text-red-400/70'}>
+                        ATK {doctrine.attackModifier >= 0 ? '+' : ''}{Math.round(doctrine.attackModifier * 100)}%
+                      </span>
+                      <span className={doctrine.defenseModifier >= 0 ? 'text-green-400/70' : 'text-red-400/70'}>
+                        DEF {doctrine.defenseModifier >= 0 ? '+' : ''}{Math.round(doctrine.defenseModifier * 100)}%
+                      </span>
+                    </div>
+                  </button>
+                )
+              })}
             </div>
+          </div>
+        )}
+        
+        {/* Actions */}
+        {!combatResult && (
+          <div className="px-4 pb-4 flex gap-3">
+            <button
+              onPointerUp={onCancel}
+              disabled={isResolving}
+              className="flex-1 py-3 text-sm text-steel-light/60 hover:text-steel-light
+                         border border-steel-light/20 hover:border-steel-light/40 rounded
+                         transition-colors disabled:opacity-50"
+              style={{ touchAction: 'manipulation' }}
+            >
+              Retreat
+            </button>
+            <button
+              onPointerUp={handleResolve}
+              disabled={isResolving}
+              className={`
+                flex-1 py-3 text-sm font-display tracking-wider uppercase rounded
+                transition-all
+                ${isResolving 
+                  ? 'bg-amber-500/20 text-amber-400 animate-pulse' 
+                  : 'bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30'
+                }
+              `}
+              style={{ touchAction: 'manipulation' }}
+            >
+              {isResolving ? 'Resolving...' : 'Attack!'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Unit card component
+function UnitCard({ unit, unitDef, faction, veterancy, side, preview, result }) {
+  const isAttacker = side === 'attacker'
+  const borderColor = isAttacker ? 'border-red-500/30' : 'border-blue-500/30'
+  const bgColor = isAttacker ? 'bg-red-500/5' : 'bg-blue-500/5'
+  
+  // Calculate displayed health
+  const displayHealth = result ? result.newHealth : unit.health
+  const healthColor = displayHealth > 60 ? 'text-green-400' : 
+                      displayHealth > 30 ? 'text-amber-400' : 'text-red-400'
+  
+  return (
+    <div className={`flex-1 p-3 rounded border ${borderColor} ${bgColor}`}>
+      {/* Header */}
+      <div className="flex items-center gap-2 mb-2">
+        <span 
+          className="text-lg"
+          style={{ color: faction?.color }}
+        >
+          {faction?.emblem}
+        </span>
+        <div className="flex-1 min-w-0">
+          <div className="text-xs text-steel-bright truncate">{unitDef?.name}</div>
+          <div className="text-[10px] text-steel-light/50">{faction?.name}</div>
+        </div>
+      </div>
+      
+      {/* Unit icon */}
+      <div 
+        className="w-full h-16 rounded flex items-center justify-center mb-2"
+        style={{ backgroundColor: faction?.color + '20' }}
+      >
+        {unitDef?.svgPath && (
+          <svg viewBox="0 0 100 100" className="w-12 h-12">
+            <path 
+              d={unitDef.svgPath} 
+              fill={faction?.color || '#888'}
+              opacity={result?.destroyed ? 0.3 : 1}
+            />
+          </svg>
+        )}
+        {result?.destroyed && (
+          <span className="absolute text-3xl">💀</span>
+        )}
+      </div>
+      
+      {/* Stats */}
+      <div className="space-y-1 text-xs">
+        {/* Health bar */}
+        <div className="flex items-center gap-2">
+          <span className="text-steel-light/50 w-8">HP</span>
+          <div className="flex-1 h-2 bg-void-950 rounded overflow-hidden">
+            <div 
+              className="h-full transition-all duration-500"
+              style={{ 
+                width: `${displayHealth}%`,
+                backgroundColor: displayHealth > 60 ? '#55a870' : displayHealth > 30 ? '#c4a35a' : '#c45555',
+              }}
+            />
+          </div>
+          <span className={`font-mono w-8 text-right ${healthColor}`}>
+            {displayHealth}
+          </span>
+        </div>
+        
+        {/* Veterancy */}
+        <div className="flex items-center justify-between text-[10px]">
+          <span className="text-steel-light/50">Rank</span>
+          <span className="text-amber-400">
+            {veterancy?.icon} {veterancy?.name}
+          </span>
+        </div>
+        
+        {/* Preview damage */}
+        {preview && !result && (
+          <div className="flex items-center justify-between text-[10px] border-t border-steel-light/10 pt-1 mt-1">
+            <span className="text-steel-light/50">Est. Damage</span>
+            <span className="text-red-400 font-mono">
+              -{preview.damageTaken}
+            </span>
+          </div>
+        )}
+        
+        {/* Result damage */}
+        {result && (
+          <div className="flex items-center justify-between text-[10px] border-t border-steel-light/10 pt-1 mt-1">
+            <span className="text-steel-light/50">Damage Taken</span>
+            <span className="text-red-400 font-mono font-bold">
+              -{result.damageTaken}
+            </span>
           </div>
         )}
       </div>

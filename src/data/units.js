@@ -7,11 +7,11 @@ export const UNIT_BRANCHES = {
 }
 
 export const VETERANCY_LEVELS = {
-  GREEN: { id: 'green', name: 'Green', multiplier: 1.0, icon: '○' },
-  TRAINED: { id: 'trained', name: 'Trained', multiplier: 1.15, icon: '◐' },
-  VETERAN: { id: 'veteran', name: 'Veteran', multiplier: 1.3, icon: '●' },
-  ELITE: { id: 'elite', name: 'Elite', multiplier: 1.5, icon: '◆' },
-  LEGENDARY: { id: 'legendary', name: 'Legendary', multiplier: 1.75, icon: '★' },
+  GREEN: { id: 'green', name: 'Green', multiplier: 1.0, icon: 'â—‹' },
+  TRAINED: { id: 'trained', name: 'Trained', multiplier: 1.15, icon: 'â—' },
+  VETERAN: { id: 'veteran', name: 'Veteran', multiplier: 1.3, icon: 'â—' },
+  ELITE: { id: 'elite', name: 'Elite', multiplier: 1.5, icon: 'â—†' },
+  LEGENDARY: { id: 'legendary', name: 'Legendary', multiplier: 1.75, icon: 'â˜…' },
 }
 
 export const VETERANCY_ORDER = ['green', 'trained', 'veteran', 'elite', 'legendary']
