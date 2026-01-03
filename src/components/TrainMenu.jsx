@@ -1,194 +1,211 @@
-// Unit training menu for production phase (capital hexes)
+// TrainMenu.jsx - Mobile-friendly unit training panel
+// Shows available units with costs, requirements, and clear action buttons
 
 import { useMemo } from 'react'
-import { UNITS } from '../data/units'
-import { FACTIONS } from '../data/factions'
+import { UNITS, UNIT_BRANCHES, getBranchColor } from '../data/units'
 import { getResourceColor } from '../data/terrain'
-import { hexId as makeHexId } from '../utils/hexMath'
 
-export default function TrainMenu({ 
-  hex, 
-  resources,
-  trainingQueue = [], 
-  faction,
-  onTrain,
-  compact = false,
-}) {
-  if (!hex) {
-    return (
-      <div className="text-sm text-steel-light/50 text-center py-4">
-        Select your capital to train units
-      </div>
-    )
-  }
-  
-  if (!hex.isCapital) {
-    return (
-      <div className="text-sm text-steel-light/50 text-center py-4">
-        Units can only be trained at your capital
-      </div>
-    )
-  }
-  
-  const factionData = FACTIONS[faction]
-  const hexKey = makeHexId(hex.q, hex.r)
-  const queuedHere = trainingQueue.filter(t => t.hexId === hexKey)
-  const existingBuildings = hex.buildings || []
-  const hasAcademy = existingBuildings.includes('academy')
-  
-  // Get trainable units
-  const availableUnits = useMemo(() => {
-    // Build list from UNITS data
-    const unitList = Object.entries(UNITS || {}).map(([id, unit]) => ({ id, ...unit }))
+// Max units that can be in training queue per hex
+const MAX_QUEUE_PER_HEX = 3
+
+export default function TrainMenu({ hex, resources, trainingQueue = [], faction, onTrain }) {
+  // Get trainable units for this hex
+  const trainOptions = useMemo(() => {
+    if (!hex) return []
     
-    return unitList.map(unit => {
-      const unitData = unit
-      
-      // Check if already in queue (limit concurrent training)
-      const inQueue = queuedHere.some(q => q.unitType === unit.id)
-      const queueFull = queuedHere.length >= 3 // Max 3 units training at once
-      
+    // Check for academy (unlocks elite units)
+    const hasAcademy = hex.buildings?.includes('academy')
+    
+    // Queue count for this hex
+    const hexQueueCount = trainingQueue.filter(q => q.hexId === `${hex.q},${hex.r}`).length
+    const queueFull = hexQueueCount >= MAX_QUEUE_PER_HEX
+    
+    return Object.entries(UNITS).map(([id, unit]) => {
       // Check resource costs
-      const canAfford = Object.entries(unitData.cost || {}).every(
-        ([resource, amount]) => (resources?.[resource] || 0) >= amount
+      const canAfford = Object.entries(unit.cost || {}).every(
+        ([res, amount]) => (resources[res] || 0) >= amount
       )
       
-      // Check building requirements
-      const requiresAcademy = unitData.requiresAcademy || unitData.tier === 'elite'
-      const meetsRequirements = !requiresAcademy || hasAcademy
+      // Elite units require academy
+      const isElite = ['tank', 'walker', 'bomber', 'artillery'].includes(id)
+      const needsAcademy = isElite && !hasAcademy
       
-      const available = !inQueue && !queueFull && canAfford && meetsRequirements
-      
-      let reason = null
-      if (inQueue) reason = 'Training...'
-      else if (queueFull) reason = 'Queue full (3 max)'
-      else if (!meetsRequirements) reason = 'Needs Academy'
-      else if (!canAfford) reason = 'Need resources'
+      // Determine availability
+      let unavailableReason = null
+      if (queueFull) unavailableReason = 'Queue full (3 max)'
+      else if (needsAcademy) unavailableReason = 'Requires Academy'
+      else if (!canAfford) unavailableReason = 'Not enough resources'
       
       return {
-        id: unit.id,
-        ...unitData,
-        available,
-        reason,
+        id,
+        ...unit,
+        canTrain: !unavailableReason,
+        unavailableReason,
         canAfford,
-        requiresAcademy,
+        isElite,
       }
     })
-  }, [hex, resources, queuedHere, faction, hasAcademy])
+  }, [hex, resources, trainingQueue])
   
-  const handleTrain = (unitId) => {
-    if (onTrain) {
-      onTrain(hexKey, unitId, faction)
+  // Group by branch
+  const byBranch = useMemo(() => {
+    const groups = {
+      [UNIT_BRANCHES.GROUND]: [],
+      [UNIT_BRANCHES.AIR]: [],
+      [UNIT_BRANCHES.ARMOR]: [],
     }
+    trainOptions.forEach(unit => {
+      const branch = unit.branch || UNIT_BRANCHES.GROUND
+      if (groups[branch]) groups[branch].push(unit)
+    })
+    return groups
+  }, [trainOptions])
+  
+  const available = trainOptions.filter(u => u.canTrain)
+  const hasAcademy = hex?.buildings?.includes('academy')
+  
+  if (!hex) {
+    return (
+      <div className="text-center py-4">
+        <p className="text-steel-light/50 text-sm">Select one of your territories first</p>
+      </div>
+    )
   }
   
-  const trainable = availableUnits.filter(u => u.available)
-  const unavailable = availableUnits.filter(u => !u.available)
+  return (
+    <div className="space-y-3">
+      {/* Header with hint */}
+      <div className="text-xs text-steel-light/70">
+        {available.length > 0 
+          ? `${available.length} unit type${available.length > 1 ? 's' : ''} available. Tap to recruit.`
+          : 'Cannot train units here. Check resources or build Academy.'
+        }
+      </div>
+      
+      {/* Units by branch */}
+      {Object.entries(byBranch).map(([branch, units]) => {
+        if (units.length === 0) return null
+        const branchName = branch === 'ground' ? 'Infantry' : branch === 'air' ? 'Air' : 'Armor'
+        
+        return (
+          <div key={branch}>
+            <div 
+              className="text-xs font-display uppercase tracking-wider mb-1.5 flex items-center gap-2"
+              style={{ color: getBranchColor(branch) }}
+            >
+              <span>{branchName}</span>
+              <div className="flex-1 h-px bg-current opacity-30" />
+            </div>
+            
+            <div className="space-y-2">
+              {units.map(unit => (
+                <UnitCard 
+                  key={unit.id}
+                  unit={unit}
+                  resources={resources}
+                  onTrain={() => unit.canTrain && onTrain(unit.id)}
+                />
+              ))}
+            </div>
+          </div>
+        )
+      })}
+      
+      {/* Queue status */}
+      {trainingQueue.length > 0 && (
+        <div className="pt-2 border-t border-steel-light/10">
+          <div className="text-xs text-steel-light/50 mb-1">Training:</div>
+          {trainingQueue
+            .filter(q => q.hexId === `${hex.q},${hex.r}`)
+            .map((item, i) => (
+              <div key={i} className="text-xs flex justify-between text-yellow-400/70">
+                <span>{UNITS[item.unitType]?.name || item.unitType}</span>
+                <span>{item.turnsRemaining} turn{item.turnsRemaining > 1 ? 's' : ''}</span>
+              </div>
+            ))
+          }
+        </div>
+      )}
+      
+      {/* Academy hint */}
+      {!hasAcademy && (
+        <div className="text-xs text-steel-light/40 pt-2 border-t border-steel-light/10">
+          💡 Build an Academy to unlock elite units (Tank, Walker, Bomber, Artillery)
+        </div>
+      )}
+    </div>
+  )
+}
+
+function UnitCard({ unit, resources, onTrain }) {
+  const branchColor = getBranchColor(unit.branch)
   
   return (
-    <div className={compact ? '' : 'p-2'}>
-      {/* Currently training */}
-      {queuedHere.length > 0 && (
-        <div className="mb-3 p-2 bg-blue-900/20 border border-blue-500/30 rounded text-xs">
-          <div className="text-blue-400 font-display uppercase tracking-wider mb-1">
-            Training ({queuedHere.length}/3)
+    <div 
+      className={`bg-void-800 border rounded p-2 ${
+        unit.canTrain 
+          ? 'border-steel-light/20' 
+          : 'border-steel-light/10 opacity-50'
+      }`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        {/* Info */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="font-display text-sm text-steel-bright">{unit.name}</span>
+            {unit.isElite && (
+              <span className="text-xs px-1 py-0.5 bg-purple-900/50 text-purple-400 rounded">Elite</span>
+            )}
           </div>
-          {queuedHere.map((item, i) => (
-            <div key={i} className="text-steel-light">
-              {UNITS[item.unitType]?.name || item.unitType}
-              <span className="text-steel-light/50"> ({item.turnsRemaining} turn{item.turnsRemaining !== 1 ? 's' : ''})</span>
+          
+          {/* Stats */}
+          <div className="flex gap-3 mt-1 text-xs font-mono">
+            <span className="text-red-400">ATK:{unit.stats?.attack}</span>
+            <span className="text-blue-400">DEF:{unit.stats?.defense}</span>
+            <span className="text-green-400">MOV:{unit.stats?.movement}</span>
+          </div>
+          
+          {/* Cost */}
+          <div className="flex flex-wrap gap-2 mt-1.5">
+            {Object.entries(unit.cost || {}).map(([res, amount]) => {
+              const hasEnough = (resources[res] || 0) >= amount
+              return (
+                <span 
+                  key={res}
+                  className={`text-xs font-mono ${hasEnough ? '' : 'text-red-400'}`}
+                  style={{ color: hasEnough ? getResourceColor(res) : undefined }}
+                >
+                  {amount} {res}
+                </span>
+              )
+            })}
+            <span className="text-xs text-steel-light/40">
+              • {unit.trainTime} turn{unit.trainTime > 1 ? 's' : ''}
+            </span>
+          </div>
+          
+          {/* Unavailable reason */}
+          {!unit.canTrain && unit.unavailableReason && (
+            <div className="text-xs text-yellow-500/70 mt-1">
+              ⚠ {unit.unavailableReason}
             </div>
-          ))}
+          )}
         </div>
-      )}
-      
-      {/* Faction bonus hint */}
-      {factionData?.combatBonus && (
-        <div className="mb-2 text-xs text-steel-light/50">
-          Faction bonus: {factionData.combatBonus.description || 'Active'}
-        </div>
-      )}
-      
-      {/* Trainable units */}
-      {trainable.length > 0 ? (
-        <div className="space-y-2">
-          {trainable.map(unit => (
-            <button
-              key={unit.id}
-              onClick={() => handleTrain(unit.id)}
-              className="w-full p-2 rounded border border-steel-light/20 bg-steel/10 
-                         text-left active:bg-steel/30 transition-colors"
-            >
-              <div className="flex items-center justify-between mb-1">
-                <span className="font-display text-sm text-steel-bright">
-                  {unit.name}
-                </span>
-                <span className="text-xs text-steel-light/50">
-                  {unit.trainTime || 1} turn{(unit.trainTime || 1) !== 1 ? 's' : ''}
-                </span>
-              </div>
-              
-              {/* Stats */}
-              <div className="flex items-center gap-3 text-xs text-steel-light/60 mb-1">
-                <span>ATK: {unit.stats?.attack || '?'}</span>
-                <span>DEF: {unit.stats?.defense || '?'}</span>
-                <span>MOV: {unit.stats?.movement || '?'}</span>
-              </div>
-              
-              {/* Description */}
-              {unit.description && (
-                <p className="text-xs text-steel-light/50 mb-1">
-                  {unit.description}
-                </p>
-              )}
-              
-              {/* Costs */}
-              <div className="flex items-center gap-2 text-xs">
-                {Object.entries(unit.cost || {}).map(([resource, amount]) => (
-                  <span 
-                    key={resource}
-                    style={{ color: getResourceColor(resource) }}
-                  >
-                    {amount} {resource}
-                  </span>
-                ))}
-              </div>
-              
-              {/* Academy requirement indicator */}
-              {unit.requiresAcademy && (
-                <div className="mt-1 text-xs text-purple-400">
-                  ★ Elite unit
-                </div>
-              )}
-            </button>
-          ))}
-        </div>
-      ) : (
-        <div className="text-sm text-steel-light/50 text-center py-2">
-          {queuedHere.length >= 3 
-            ? 'Training queue full (3 max)'
-            : unavailable.length > 0
-              ? 'Check resources or build Academy for elite units'
-              : 'No units available'}
-        </div>
-      )}
-      
-      {/* Unavailable units */}
-      {unavailable.length > 0 && trainable.length > 0 && (
-        <div className="mt-3 pt-2 border-t border-steel-light/10">
-          <div className="text-xs text-steel-light/40 mb-1">Unavailable:</div>
-          <div className="text-xs text-steel-light/30">
-            {unavailable.map(u => `${u.name} (${u.reason})`).join(', ')}
-          </div>
-        </div>
-      )}
-      
-      {/* Academy hint if not built */}
-      {!hasAcademy && (
-        <div className="mt-3 pt-2 border-t border-steel-light/10 text-xs text-steel-light/40">
-          💡 Build an Academy to unlock elite units
-        </div>
-      )}
+        
+        {/* Train button */}
+        <button
+          onClick={onTrain}
+          disabled={!unit.canTrain}
+          className={`flex-none px-3 py-2 text-xs font-display uppercase tracking-wider rounded
+                     transition-transform ${
+                       unit.canTrain
+                         ? 'bg-blue-900/50 text-blue-400 border border-blue-500/50 active:bg-blue-800 active:scale-95'
+                         : 'bg-steel/20 text-steel-light/30 border border-steel-light/10 cursor-not-allowed'
+                     }`}
+        >
+          Train
+        </button>
+      </div>
     </div>
   )
 }

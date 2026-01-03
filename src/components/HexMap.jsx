@@ -1,4 +1,5 @@
-// Hex map grid - simplified for reliable iOS touch
+// HexMap.jsx - Mobile-first hex grid with iOS-compatible touch
+// Uses PointerEvents for universal mouse/touch support
 
 import { useMemo, useCallback, useState, useEffect } from 'react'
 import HexTile from './HexTile'
@@ -32,7 +33,7 @@ export default function HexMap({
       maxY = Math.max(maxY, y + HEX_SIZE)
     })
     
-    const padding = 40
+    const padding = 60
     setViewBox({
       x: minX - padding,
       y: minY - padding,
@@ -63,7 +64,7 @@ export default function HexMap({
     [validAttacks]
   )
   
-  // Simple visibility check
+  // Simple visibility check with optional chaining
   const getVisibility = useCallback((hex) => {
     if (!playerFaction) return 'visible'
     if (hex.visible?.[playerFaction]) return 'visible'
@@ -76,20 +77,43 @@ export default function HexMap({
     onHexClick?.(q, r)
   }, [onHexClick])
   
+  if (!mapData || Object.keys(mapData).length === 0) {
+    return (
+      <div className="flex items-center justify-center h-full text-steel-light">
+        <span className="animate-pulse">Loading map...</span>
+      </div>
+    )
+  }
+  
   return (
     <div className="w-full h-full bg-void-950 overflow-auto">
       <svg
         viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`}
         className="w-full h-full min-w-[300px] min-h-[300px]"
         preserveAspectRatio="xMidYMid meet"
+        style={{ touchAction: 'pan-x pan-y' }}
       >
         {/* Background */}
+        <defs>
+          <radialGradient id="mapGlow" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="rgba(138, 155, 170, 0.08)" />
+            <stop offset="100%" stopColor="rgba(10, 10, 15, 0)" />
+          </radialGradient>
+        </defs>
+        
         <rect 
           x={viewBox.x} 
           y={viewBox.y} 
           width={viewBox.width} 
           height={viewBox.height} 
           fill="#0a0a12" 
+        />
+        <rect 
+          x={viewBox.x} 
+          y={viewBox.y} 
+          width={viewBox.width} 
+          height={viewBox.height} 
+          fill="url(#mapGlow)" 
         />
         
         {/* Hex tiles */}

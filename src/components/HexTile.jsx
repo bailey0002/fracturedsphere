@@ -1,4 +1,5 @@
-// Individual hex tile - uses pointer events for universal touch/mouse support
+// HexTile.jsx - Individual hex with iOS-compatible touch handling
+// Uses onPointerUp for universal mouse/touch support
 
 import { memo, useMemo, useCallback } from 'react'
 import { axialToPixel, getHexPath } from '../utils/hexMath'
@@ -29,11 +30,12 @@ function HexTile({
   
   // Colors
   const fillColor = useMemo(() => {
+    if (visibility === 'unexplored') return '#0a0a12'
     if (owner && factionData) {
-      return factionData.color + '40'
+      return factionData.color + '40' // 25% opacity faction overlay
     }
     return terrainData.color
-  }, [terrain, owner, factionData, terrainData])
+  }, [terrain, owner, factionData, terrainData, visibility])
   
   const strokeColor = useMemo(() => {
     if (isSelected) return '#ffffff'
@@ -43,124 +45,121 @@ function HexTile({
     return 'rgba(138, 155, 170, 0.3)'
   }, [isSelected, isValidMove, isValidAttack, owner, factionData])
   
-  const strokeWidth = isSelected || isValidMove || isValidAttack ? 3 : 1
+  const strokeWidth = isSelected ? 3 : (isValidMove || isValidAttack) ? 2.5 : 1
   
   // Visibility opacity
-  const opacity = visibility === 'unexplored' ? 0.6 : visibility === 'explored' ? 0.85 : 1
+  const opacity = visibility === 'unexplored' ? 0.4 : visibility === 'explored' ? 0.7 : 1
   
-  // Universal click/tap handler using onPointerUp
-  // PointerEvents work consistently across mouse and touch
+  // Handle tap/click using PointerUp (works on both mouse and touch)
   const handlePointerUp = useCallback((e) => {
     e.stopPropagation()
-    e.preventDefault()
     onClick?.(q, r)
   }, [onClick, q, r])
   
   // Unit display
   const unitDisplay = useMemo(() => {
-    if (units.length === 0) return null
+    if (units.length === 0 || visibility === 'unexplored') return null
     
-    const totalStrength = units.reduce((sum, u) => sum + (u.strength || 1), 0)
-    const unitFaction = units[0].faction
-    const unitColor = FACTIONS[unitFaction]?.color || '#fff'
+    const unit = units[0]
+    const unitFaction = FACTIONS[unit.owner]
     
     return (
-      <g>
+      <g transform={`translate(0, ${HEX_SIZE * 0.25})`} style={{ pointerEvents: 'none' }}>
         <circle
-          cx={x}
-          cy={y + 8}
-          r={14}
-          fill={unitColor}
-          stroke="#000"
-          strokeWidth={2}
-          opacity={0.9}
+          cx={0}
+          cy={0}
+          r={12}
+          fill={unitFaction?.color || '#888'}
+          stroke="#fff"
+          strokeWidth={1.5}
         />
         <text
-          x={x}
-          y={y + 13}
+          x={0}
+          y={4}
           textAnchor="middle"
-          fontSize="12"
+          fontSize={11}
+          fill="#fff"
           fontWeight="bold"
-          fill="#000"
+          fontFamily="monospace"
         >
-          {totalStrength}
+          {units.length}
         </text>
       </g>
     )
-  }, [units, x, y])
+  }, [units, visibility])
   
   return (
     <g 
-      style={{ opacity, cursor: 'pointer' }}
+      transform={`translate(${x}, ${y})`}
       onPointerUp={handlePointerUp}
+      style={{ cursor: 'pointer' }}
     >
-      {/* Hex shape - main tap target */}
+      {/* Base hex shape */}
       <path
         d={hexPath}
-        transform={`translate(${x}, ${y})`}
         fill={fillColor}
         stroke={strokeColor}
         strokeWidth={strokeWidth}
-        style={{ pointerEvents: 'all' }}
+        opacity={opacity}
       />
       
-      {/* Valid move indicator */}
+      {/* Terrain pattern overlay */}
+      {visibility === 'visible' && (
+        <path
+          d={hexPath}
+          fill={terrainData.patternColor || terrainData.color}
+          opacity={0.2}
+          style={{ pointerEvents: 'none' }}
+        />
+      )}
+      
+      {/* Valid move indicator - pulsing dashed circle */}
       {isValidMove && (
         <circle
-          cx={x}
-          cy={y}
-          r={HEX_SIZE - 10}
+          cx={0}
+          cy={0}
+          r={HEX_SIZE * 0.35}
           fill="rgba(85, 168, 112, 0.15)"
           stroke="#55a870"
           strokeWidth={2}
           strokeDasharray="6 4"
           style={{ pointerEvents: 'none' }}
+          className="animate-pulse"
         />
       )}
       
-      {/* Valid attack indicator */}
+      {/* Valid attack indicator - solid red */}
       {isValidAttack && (
-        <>
-          <circle
-            cx={x}
-            cy={y}
-            r={HEX_SIZE - 10}
-            fill="rgba(196, 85, 85, 0.2)"
-            stroke="#c45555"
-            strokeWidth={2}
-            style={{ pointerEvents: 'none' }}
-          />
-          <text
-            x={x}
-            y={y - 15}
-            textAnchor="middle"
-            fontSize="16"
-            style={{ pointerEvents: 'none' }}
-          >
-            ⚔️
-          </text>
-        </>
+        <circle
+          cx={0}
+          cy={0}
+          r={HEX_SIZE * 0.35}
+          fill="rgba(196, 85, 85, 0.25)"
+          stroke="#c45555"
+          strokeWidth={2.5}
+          style={{ pointerEvents: 'none' }}
+        />
       )}
       
-      {/* Terrain icon */}
-      <text
-        x={x}
-        y={y - 8}
-        textAnchor="middle"
-        fontSize="14"
-        opacity={0.7}
-        style={{ pointerEvents: 'none' }}
-      >
-        {terrainData.icon}
-      </text>
+      {/* Faction ownership indicator */}
+      {owner && visibility === 'visible' && !isCapital && (
+        <circle
+          cx={0}
+          cy={-HEX_SIZE * 0.25}
+          r={6}
+          fill={factionData?.color || '#888'}
+          opacity={0.9}
+          style={{ pointerEvents: 'none' }}
+        />
+      )}
       
-      {/* Capital star */}
-      {isCapital && (
+      {/* Capital indicator */}
+      {isCapital && visibility === 'visible' && (
         <text
-          x={x + 18}
-          y={y - 15}
+          x={0}
+          y={-HEX_SIZE * 0.2}
           textAnchor="middle"
-          fontSize="18"
+          fontSize={16}
           fill="#ffd700"
           style={{ pointerEvents: 'none' }}
         >
@@ -168,22 +167,20 @@ function HexTile({
         </text>
       )}
       
-      {/* Unexplored marker */}
-      {visibility === 'unexplored' && !owner && (
-        <text
-          x={x}
-          y={y + 5}
-          textAnchor="middle"
-          fontSize="20"
-          fill="rgba(138, 155, 170, 0.5)"
-          style={{ pointerEvents: 'none' }}
-        >
-          ?
-        </text>
-      )}
-      
       {/* Units */}
       {unitDisplay}
+      
+      {/* Selection highlight */}
+      {isSelected && (
+        <path
+          d={hexPath}
+          fill="none"
+          stroke="#ffffff"
+          strokeWidth={3}
+          opacity={0.8}
+          style={{ pointerEvents: 'none' }}
+        />
+      )}
     </g>
   )
 }

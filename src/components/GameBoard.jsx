@@ -1,6 +1,7 @@
-// Main game board - mobile-first with clear action prompts
+// GameBoard.jsx - Mobile-first with step-by-step action prompts
+// Fully functional iOS-compatible console UI
 
-import { useMemo, useEffect, useState } from 'react'
+import { useMemo, useEffect, useState, useCallback } from 'react'
 import HexMap from './HexMap'
 import HexInfoPanel from './HexInfoPanel'
 import CombatModal from './CombatModal'
@@ -9,17 +10,19 @@ import TrainMenu from './TrainMenu'
 import DiplomacyPanel from './DiplomacyPanel'
 import { useAI } from '../hooks/useAI'
 import { FACTIONS } from '../data/factions'
+import { UNITS } from '../data/units'
+import { BUILDINGS } from '../data/terrain'
 import { hexId } from '../utils/hexMath'
-import { getTerritoryCount } from '../data/mapData'
-import { PHASES, PHASE_ORDER } from '../hooks/useGameState'
 
-// Phase info
-const PHASE_INFO = {
-  production: { icon: '⚙', name: 'Production' },
-  diplomacy: { icon: '🤝', name: 'Diplomacy' },
-  movement: { icon: '→', name: 'Movement' },
-  combat: { icon: '⚔', name: 'Combat' },
+// Phase definitions
+const PHASES = {
+  production: { icon: '⚙', name: 'Production', color: 'text-yellow-400' },
+  diplomacy: { icon: '🤝', name: 'Diplomacy', color: 'text-blue-400' },
+  movement: { icon: '➤', name: 'Movement', color: 'text-green-400' },
+  combat: { icon: '⚔', name: 'Combat', color: 'text-red-400' },
 }
+
+const PHASE_ORDER = ['production', 'diplomacy', 'movement', 'combat']
 
 export default function GameBoard({ state, actions, dispatch }) {
   const {
@@ -35,184 +38,275 @@ export default function GameBoard({ state, actions, dispatch }) {
     playerFaction,
     factionResources,
     pendingCombat,
-    buildingQueue,
-    trainingQueue,
+    buildingQueue = [],
+    trainingQueue = [],
     relations,
   } = state
-  
-  const [aiThinking, setAiThinking] = useState(false)
+
+  // Local UI state
+  const [activePanel, setActivePanel] = useState(null) // 'info' | 'build' | 'train' | null
   const [showDiplomacy, setShowDiplomacy] = useState(false)
-  const [expandedPanel, setExpandedPanel] = useState(null)
-  
-  const factionData = FACTIONS[playerFaction]
-  const resources = factionResources[playerFaction]
-  const phaseInfo = PHASE_INFO[phase] || PHASE_INFO.production
-  
+  const [aiThinking, setAiThinking] = useState(false)
+
+  // Faction data
+  const factionData = FACTIONS[playerFaction] || {}
+  const resources = factionResources?.[playerFaction] || { gold: 0, iron: 0, grain: 0 }
+
   // AI hook
-  const { processAllAI } = useAI(state, dispatch)
-  
-  // Process AI turns
+  const { processAllAI } = useAI?.(state, dispatch) || { processAllAI: async () => {} }
+
+  // Process AI on movement phase
   useEffect(() => {
     if (phase === 'movement' && !aiThinking) {
       setAiThinking(true)
-      processAllAI().then(() => setAiThinking(false))
+      const timer = setTimeout(() => {
+        processAllAI?.().finally(() => setAiThinking(false))
+      }, 500)
+      return () => clearTimeout(timer)
     }
   }, [phase, turn])
-  
-  // Get selected hex data
+
+  // Selected hex data
   const selectedHexData = useMemo(() => {
     if (!selectedHex) return null
     return mapData[selectedHex] || null
   }, [selectedHex, mapData])
-  
-  // Get units on selected hex
+
+  // Units on selected hex
   const unitsOnSelectedHex = useMemo(() => {
-    if (!selectedHex) return []
-    return units.filter(u => hexId(u.q, u.r) === selectedHex)
-  }, [selectedHex, units])
-  
+    if (!selectedHexData) return []
+    return units.filter(u => u.q === selectedHexData.q && u.r === selectedHexData.r)
+  }, [selectedHexData, units])
+
+  // Selected unit object
+  const selectedUnitData = useMemo(() => {
+    if (!selectedUnit) return null
+    return units.find(u => u.id === selectedUnit) || null
+  }, [selectedUnit, units])
+
+  // Derived states for UI logic
+  const isPlayerHex = selectedHexData?.owner === playerFaction
+  const hasPlayerUnits = unitsOnSelectedHex.some(u => u.owner === playerFaction)
+  const canBuild = phase === 'production' && isPlayerHex
+  const canTrain = phase === 'production' && isPlayerHex
+  const unmovedUnits = units.filter(u => u.owner === playerFaction && !u.movedThisTurn)
+  const hasEnemiesInRange = validAttacks.length > 0
+
   // Territory count
-  const territoryCount = useMemo(() => 
-    getTerritoryCount(mapData, playerFaction),
-    [mapData, playerFaction]
-  )
-  
-  // Get player's unmoved units
-  const unmovedUnits = useMemo(() => {
-    return units.filter(u => u.faction === playerFaction && !u.hasMoved)
-  }, [units, playerFaction])
-  
-  // Determine current action hint based on game state
-  const actionHint = useMemo(() => {
-    if (phase === 'production') {
-      if (selectedHexData?.owner === playerFaction) {
-        if (selectedHexData.isCapital) {
-          return { text: 'Build structures or Train units', color: 'text-green-400' }
+  const territoryCount = useMemo(() => {
+    return Object.values(mapData).filter(h => h.owner === playerFaction).length
+  }, [mapData, playerFaction])
+  const totalHexes = Object.keys(mapData).length
+
+  // ============================================
+  // ACTION PROMPT SYSTEM - The key UX feature
+  // ============================================
+  const actionPrompt = useMemo(() => {
+    // Priority-ordered prompts based on game state
+    
+    // AI thinking
+    if (aiThinking) {
+      return { text: 'AI factions are taking their turns...', type: 'wait', icon: '⏳' }
+    }
+
+    // Combat pending
+    if (pendingCombat) {
+      return { text: 'Resolve the combat or cancel', type: 'combat', icon: '⚔' }
+    }
+
+    // Phase-specific prompts
+    switch (phase) {
+      case 'production':
+        if (!selectedHex) {
+          return { text: 'Tap one of your territories to build or train', type: 'select', icon: '👆' }
         }
-        return { text: 'Build structures here', color: 'text-green-400' }
-      }
-      return { text: 'Tap your territory to build', color: 'text-steel-light/60' }
+        if (selectedHex && !isPlayerHex) {
+          return { text: 'Select YOUR territory (highlighted in your color)', type: 'wrong', icon: '⚠' }
+        }
+        if (selectedHex && isPlayerHex) {
+          return { text: 'Choose BUILD or TRAIN below, or tap NEXT PHASE', type: 'action', icon: '🔨' }
+        }
+        break
+
+      case 'diplomacy':
+        return { text: 'Open Diplomacy panel or tap NEXT PHASE to skip', type: 'optional', icon: '🤝' }
+
+      case 'movement':
+        if (!selectedHex && unmovedUnits.length > 0) {
+          return { text: `Tap a hex with your units (${unmovedUnits.length} can move)`, type: 'select', icon: '👆' }
+        }
+        if (selectedHex && !hasPlayerUnits) {
+          return { text: 'No units here. Tap a hex with YOUR units', type: 'wrong', icon: '⚠' }
+        }
+        if (selectedUnit && validMoves.length > 0) {
+          return { text: `Tap a GREEN hex to move (${validMoves.length} options)`, type: 'move', icon: '➤' }
+        }
+        if (selectedUnit && validMoves.length === 0 && validAttacks.length === 0) {
+          return { text: 'This unit has no moves. Select another or NEXT PHASE', type: 'done', icon: '✓' }
+        }
+        if (selectedUnit && validAttacks.length > 0) {
+          return { text: `Tap RED hex to attack (${validAttacks.length} targets)`, type: 'attack', icon: '⚔' }
+        }
+        if (unmovedUnits.length === 0) {
+          return { text: 'All units moved! Tap NEXT PHASE or END TURN', type: 'done', icon: '✓' }
+        }
+        break
+
+      case 'combat':
+        if (validAttacks.length > 0) {
+          return { text: 'Select unit and tap enemy to attack', type: 'attack', icon: '⚔' }
+        }
+        return { text: 'No attacks available. Tap END TURN', type: 'done', icon: '✓' }
     }
-    
-    if (phase === 'diplomacy') {
-      return { text: 'Open Diplomacy to manage relations', color: 'text-blue-400' }
-    }
-    
-    if (phase === 'movement') {
-      if (validAttacks.length > 0) {
-        return { text: `⚔️ ${validAttacks.length} attack target${validAttacks.length > 1 ? 's' : ''} - tap red hex!`, color: 'text-red-400' }
-      }
-      if (validMoves.length > 0) {
-        return { text: `${validMoves.length} moves available - tap green hex`, color: 'text-green-400' }
-      }
-      if (selectedUnit) {
-        return { text: 'No moves available for this unit', color: 'text-yellow-400' }
-      }
-      if (unmovedUnits.length > 0) {
-        return { text: `${unmovedUnits.length} unit${unmovedUnits.length > 1 ? 's' : ''} ready - tap to select`, color: 'text-steel-light' }
-      }
-      return { text: 'All units moved - Next or End Turn', color: 'text-steel-light/60' }
-    }
-    
-    if (phase === 'combat') {
-      return { text: 'Resolving combat...', color: 'text-orange-400' }
-    }
-    
-    return { text: '', color: '' }
-  }, [phase, selectedHexData, selectedUnit, validMoves, validAttacks, unmovedUnits, playerFaction])
+
+    return { text: 'Tap NEXT PHASE to continue', type: 'default', icon: '→' }
+  }, [phase, selectedHex, selectedUnit, isPlayerHex, hasPlayerUnits, validMoves, validAttacks, unmovedUnits, pendingCombat, aiThinking])
+
+  // Prompt colors
+  const promptColors = {
+    select: 'bg-blue-900/80 border-blue-500',
+    action: 'bg-green-900/80 border-green-500',
+    move: 'bg-green-900/80 border-green-500',
+    attack: 'bg-red-900/80 border-red-500',
+    combat: 'bg-red-900/80 border-red-500',
+    wrong: 'bg-yellow-900/80 border-yellow-500',
+    done: 'bg-steel/50 border-steel-light',
+    optional: 'bg-purple-900/80 border-purple-500',
+    wait: 'bg-steel/50 border-steel-light',
+    default: 'bg-steel/50 border-steel-light',
+  }
+
+  // ============================================
+  // EVENT HANDLERS
+  // ============================================
   
-  // Handle hex click
-  const handleHexClick = (q, r) => {
-    const key = hexId(q, r)
+  const handleHexClick = useCallback((q, r) => {
+    const clickedHexId = hexId(q, r)
     
-    // If clicked a valid move target
-    if (selectedUnit && validMoves.some(m => hexId(m.q, m.r) === key)) {
-      actions.moveUnit(selectedUnit.id, q, r)
+    // If we have a selected unit and this is a valid move
+    if (selectedUnit && validMoves.some(m => m.q === q && m.r === r)) {
+      actions.moveUnit(q, r)
       return
     }
     
-    // If clicked a valid attack target
-    if (selectedUnit && validAttacks.some(a => hexId(a.q, a.r) === key)) {
-      actions.initiateAttack(selectedUnit.id, q, r)
+    // If we have a selected unit and this is a valid attack
+    if (selectedUnit && validAttacks.some(a => a.q === q && a.r === r)) {
+      const targetUnit = units.find(u => u.q === q && u.r === r && u.owner !== playerFaction)
+      if (targetUnit) {
+        actions.initiateAttack?.(selectedUnit, targetUnit.id)
+      }
       return
     }
     
-    // Select the hex
+    // Otherwise, select the hex
     actions.selectHex(q, r)
     
-    // If there's a player unit, select it
-    const unitOnHex = units.find(u => 
-      hexId(u.q, u.r) === key && u.faction === playerFaction
-    )
-    if (unitOnHex) {
-      actions.selectUnit(unitOnHex.id)
-    } else {
-      actions.selectUnit(null)
+    // Auto-open info panel on mobile when hex selected
+    if (window.innerWidth < 768) {
+      setActivePanel('info')
     }
-    
-    // Auto-expand info panel
-    setExpandedPanel('info')
-  }
-  
-  // Combat resolution
-  const handleCombatResolve = (result) => {
-    actions.resolveCombat(result)
-  }
-  
-  // Abilities check
-  const canBuild = selectedHexData?.owner === playerFaction && phase === 'production'
-  const canTrain = selectedHexData?.owner === playerFaction && 
-                   selectedHexData?.isCapital && 
-                   phase === 'production'
-  
+  }, [selectedUnit, validMoves, validAttacks, units, playerFaction, actions])
+
+  const handleBuild = useCallback((buildingType) => {
+    if (!selectedHex || !isPlayerHex) return
+    actions.startBuilding?.(selectedHex, buildingType, playerFaction)
+  }, [selectedHex, isPlayerHex, playerFaction, actions])
+
+  const handleTrain = useCallback((unitType) => {
+    if (!selectedHex || !isPlayerHex) return
+    actions.startTraining?.(selectedHex, unitType, playerFaction)
+  }, [selectedHex, isPlayerHex, playerFaction, actions])
+
+  const handleCombatResolve = useCallback((result) => {
+    actions.resolveCombat?.(result)
+  }, [actions])
+
+  // ============================================
+  // RENDER
+  // ============================================
+
   return (
-    <div className="min-h-screen bg-void-950 flex flex-col">
+    <div className="h-screen flex flex-col bg-void-950 overflow-hidden">
       
-      {/* === TOP BAR === */}
-      <header className="flex-shrink-0 bg-void-900 border-b border-steel-light/20 p-2">
-        <div className="flex items-center justify-between mb-1">
-          <div className="flex items-center gap-2">
-            <span style={{ color: factionData?.color }}>{factionData?.emblem}</span>
-            <span className="font-display text-sm text-steel-bright">{factionData?.name}</span>
-          </div>
-          <div className="text-xs font-mono text-steel-light">
-            Turn {turn} • {territoryCount}/{Object.keys(mapData).length}
-          </div>
-        </div>
-        
-        {/* Resources */}
-        <div className="flex items-center gap-3 text-xs">
-          <span className="text-yellow-400">◈{Math.floor(resources?.gold || 0)}</span>
-          <span className="text-slate-400">⬡{Math.floor(resources?.iron || 0)}</span>
-          <span className="text-green-400">❋{Math.floor(resources?.grain || 0)}</span>
-          <span className="text-purple-400">✧{Math.floor(resources?.influence || 0)}</span>
-        </div>
-      </header>
-      
-      {/* === PHASE + ACTION BAR === */}
-      <div className="flex-shrink-0 bg-void-900/80 border-b border-steel-light/10 px-2 py-2">
+      {/* ===== HEADER: Faction + Resources ===== */}
+      <header className="flex-none px-3 py-2 bg-void-900 border-b border-steel-light/20">
         <div className="flex items-center justify-between gap-2">
-          {/* Phase indicator */}
-          <div className="flex items-center gap-2 px-2 py-1 bg-continuity/20 rounded border border-continuity/40">
-            <span className="text-base">{phaseInfo.icon}</span>
-            <span className="font-display text-xs text-continuity uppercase">{phaseInfo.name}</span>
-            <span className="text-[10px] text-steel-light/40">{phaseIndex + 1}/4</span>
+          {/* Faction badge */}
+          <div 
+            className="flex items-center gap-2 px-2 py-1 rounded border text-sm"
+            style={{ borderColor: factionData.color, color: factionData.color }}
+          >
+            <span>{factionData.emblem || '◆'}</span>
+            <span className="hidden sm:inline font-display tracking-wider">{factionData.name}</span>
           </div>
           
-          {/* Controls */}
-          <div className="flex items-center gap-1">
+          {/* Resources - compact on mobile */}
+          <div className="flex items-center gap-3 text-xs font-mono">
+            <span className="text-yellow-400">◈{resources.gold}</span>
+            <span className="text-steel-light">⬡{resources.iron}</span>
+            <span className="text-green-400">❋{resources.grain}</span>
+          </div>
+          
+          {/* Turn/Territory */}
+          <div className="text-xs font-mono text-steel-light/70">
+            <span className="hidden sm:inline">Turn {turn} • </span>
+            <span style={{ color: factionData.color }}>{territoryCount}</span>
+            <span className="text-steel-light/50">/{totalHexes}</span>
+          </div>
+        </div>
+      </header>
+
+      {/* ===== PHASE BAR with ACTION PROMPT ===== */}
+      <div className="flex-none bg-void-900/80 border-b border-steel-light/10">
+        {/* Phase indicator + controls */}
+        <div className="flex items-center justify-between px-3 py-2">
+          {/* Current phase */}
+          <div className="flex items-center gap-2">
+            <span className={`text-lg ${PHASES[phase]?.color || 'text-white'}`}>
+              {PHASES[phase]?.icon || '?'}
+            </span>
+            <span className="font-display text-sm tracking-wider text-steel-bright uppercase">
+              {PHASES[phase]?.name || phase}
+            </span>
+            
+            {/* Phase dots */}
+            <div className="hidden sm:flex items-center gap-1 ml-2">
+              {PHASE_ORDER.map((p, i) => (
+                <div 
+                  key={p}
+                  className={`w-2 h-2 rounded-full transition-colors ${
+                    p === phase ? 'bg-continuity' : 
+                    i < phaseIndex ? 'bg-steel-light/40' : 'bg-steel-light/20'
+                  }`}
+                />
+              ))}
+            </div>
+          </div>
+          
+          {/* Phase controls */}
+          <div className="flex items-center gap-2">
+            {phase === 'diplomacy' && (
+              <button
+                onClick={() => setShowDiplomacy(true)}
+                className="px-3 py-1.5 text-xs font-display uppercase tracking-wider
+                           bg-purple-900/50 text-purple-300 border border-purple-500/50 rounded
+                           active:bg-purple-800"
+              >
+                Diplomacy
+              </button>
+            )}
             <button
               onClick={actions.advancePhase}
-              className="px-3 py-1.5 text-xs font-display uppercase
-                         bg-continuity/20 text-continuity border border-continuity/40 rounded
-                         active:bg-continuity/40"
+              className="px-3 py-1.5 text-xs font-display uppercase tracking-wider
+                         bg-continuity/30 text-continuity border border-continuity/50 rounded
+                         active:bg-continuity/50"
             >
               Next
             </button>
             <button
               onClick={actions.endTurn}
-              className="px-3 py-1.5 text-xs font-display uppercase
-                         bg-warning/20 text-warning border border-warning/40 rounded
+              className="px-3 py-1.5 text-xs font-display uppercase tracking-wider
+                         bg-warning/20 text-warning border border-warning/50 rounded
                          active:bg-warning/40"
             >
               End Turn
@@ -220,25 +314,18 @@ export default function GameBoard({ state, actions, dispatch }) {
           </div>
         </div>
         
-        {/* Action hint - always visible */}
-        <div className={`mt-2 text-xs ${actionHint.color} font-mono`}>
-          → {actionHint.text}
+        {/* ACTION PROMPT - Always visible, tells user what to do */}
+        <div 
+          className={`px-3 py-2 border-t border-steel-light/10 ${promptColors[actionPrompt.type]}`}
+        >
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-lg">{actionPrompt.icon}</span>
+            <span className="text-white font-medium">{actionPrompt.text}</span>
+          </div>
         </div>
-        
-        {/* Diplomacy button */}
-        {phase === 'diplomacy' && (
-          <button
-            onClick={() => setShowDiplomacy(true)}
-            className="mt-2 w-full px-3 py-2 text-xs font-display uppercase
-                       bg-blue-900/30 text-blue-400 border border-blue-500/30 rounded
-                       active:bg-blue-900/50"
-          >
-            🤝 Open Diplomacy Panel
-          </button>
-        )}
       </div>
-      
-      {/* === MAP AREA === */}
+
+      {/* ===== MAP AREA ===== */}
       <div className="flex-1 min-h-0 relative">
         <HexMap
           mapData={mapData}
@@ -250,94 +337,103 @@ export default function GameBoard({ state, actions, dispatch }) {
           onHexClick={handleHexClick}
         />
         
-        {/* AI overlay */}
+        {/* AI thinking overlay */}
         {aiThinking && (
-          <div className="absolute inset-0 bg-void-950/70 flex items-center justify-center">
-            <div className="bg-void-900 border border-steel-light/30 px-6 py-3 rounded-lg">
-              <span className="font-display text-sm text-steel-bright animate-pulse">
-                AI THINKING...
-              </span>
+          <div className="absolute inset-0 bg-void-950/70 flex items-center justify-center pointer-events-none">
+            <div className="bg-void-900 border border-steel-light/30 px-6 py-3 rounded-lg animate-pulse">
+              <span className="font-display text-sm text-steel-bright">AI THINKING...</span>
             </div>
           </div>
         )}
         
-        {/* Quick action buttons when unit selected with valid moves/attacks */}
-        {selectedUnit && (validMoves.length > 0 || validAttacks.length > 0) && (
-          <div className="absolute top-2 right-2 flex flex-col gap-2">
-            {validMoves.length > 0 && (
-              <div className="bg-green-900/80 text-green-400 px-3 py-1.5 rounded text-xs font-mono border border-green-500/30">
-                {validMoves.length} move{validMoves.length > 1 ? 's' : ''}
-              </div>
-            )}
+        {/* Quick stats when unit selected */}
+        {selectedUnitData && (
+          <div className="absolute top-2 right-2 bg-void-900/90 border border-steel-light/30 rounded px-2 py-1 text-xs font-mono">
+            <div className="text-steel-bright">{UNITS[selectedUnitData.type]?.name || selectedUnitData.type}</div>
+            <div className="text-green-400">Move: {selectedUnitData.movedThisTurn ? '0' : selectedUnitData.stats?.movement || 2}</div>
             {validAttacks.length > 0 && (
-              <div className="bg-red-900/80 text-red-400 px-3 py-1.5 rounded text-xs font-mono border border-red-500/30">
-                {validAttacks.length} attack{validAttacks.length > 1 ? 's' : ''}
-              </div>
+              <div className="text-red-400">Targets: {validAttacks.length}</div>
             )}
           </div>
         )}
       </div>
-      
-      {/* === BOTTOM PANEL === */}
-      <div className="flex-shrink-0 bg-void-900 border-t border-steel-light/20">
-        {/* Tabs */}
+
+      {/* ===== BOTTOM CONSOLE - Tabbed Panel ===== */}
+      <div className="flex-none bg-void-900 border-t border-steel-light/20">
+        {/* Tab buttons */}
         <div className="flex border-b border-steel-light/10">
           <TabButton 
             label="Info" 
-            active={expandedPanel === 'info'} 
-            onClick={() => setExpandedPanel(expandedPanel === 'info' ? null : 'info')}
+            active={activePanel === 'info'} 
+            onClick={() => setActivePanel(activePanel === 'info' ? null : 'info')}
+            badge={selectedHex ? '•' : null}
           />
           <TabButton 
             label="Build" 
-            active={expandedPanel === 'build'} 
+            active={activePanel === 'build'} 
             disabled={!canBuild}
-            badge={canBuild ? '!' : null}
-            onClick={() => canBuild && setExpandedPanel(expandedPanel === 'build' ? null : 'build')}
+            onClick={() => canBuild && setActivePanel(activePanel === 'build' ? null : 'build')}
+            badge={canBuild && isPlayerHex ? '!' : null}
           />
           <TabButton 
             label="Train" 
-            active={expandedPanel === 'train'} 
+            active={activePanel === 'train'} 
             disabled={!canTrain}
-            badge={canTrain ? '!' : null}
-            onClick={() => canTrain && setExpandedPanel(expandedPanel === 'train' ? null : 'train')}
+            onClick={() => canTrain && setActivePanel(activePanel === 'train' ? null : 'train')}
+            badge={canTrain && isPlayerHex ? '!' : null}
           />
+          {activePanel && (
+            <button 
+              onClick={() => setActivePanel(null)}
+              className="flex-none px-4 py-2.5 text-steel-light/50 active:text-white"
+            >
+              ✕
+            </button>
+          )}
         </div>
         
         {/* Panel content */}
-        {expandedPanel && (
-          <div className="max-h-44 overflow-y-auto p-3">
-            {expandedPanel === 'info' && (
-              <HexInfoPanel
-                hex={selectedHexData}
+        {activePanel && (
+          <div 
+            className="max-h-48 overflow-y-auto p-3"
+            style={{ WebkitOverflowScrolling: 'touch' }}
+          >
+            {activePanel === 'info' && (
+              <InfoPanel 
+                hex={selectedHexData} 
                 units={unitsOnSelectedHex}
                 playerFaction={playerFaction}
-                compact
               />
             )}
-            {expandedPanel === 'build' && canBuild && (
+            {activePanel === 'build' && canBuild && (
               <BuildMenu
                 hex={selectedHexData}
                 resources={resources}
                 buildingQueue={buildingQueue}
-                onBuild={actions.startBuilding}
-                compact
+                onBuild={handleBuild}
               />
             )}
-            {expandedPanel === 'train' && canTrain && (
+            {activePanel === 'train' && canTrain && (
               <TrainMenu
                 hex={selectedHexData}
                 resources={resources}
                 trainingQueue={trainingQueue}
                 faction={playerFaction}
-                onTrain={actions.startTraining}
-                compact
+                onTrain={handleTrain}
               />
             )}
           </div>
         )}
+        
+        {/* Collapsed hint when no panel open */}
+        {!activePanel && selectedHex && (
+          <div className="px-3 py-2 text-xs text-steel-light/50 text-center">
+            Tap a tab above to see details or take action
+          </div>
+        )}
       </div>
-      
-      {/* === MODALS === */}
+
+      {/* ===== MODALS ===== */}
       {pendingCombat && (
         <CombatModal
           attacker={pendingCombat.attacker}
@@ -355,7 +451,6 @@ export default function GameBoard({ state, actions, dispatch }) {
           playerFaction={playerFaction}
           relations={relations}
           playerResources={resources}
-          lastDiplomaticResult={state.lastDiplomaticResult}
           onDiplomaticAction={actions.performDiplomaticAction}
           onClose={() => setShowDiplomacy(false)}
         />
@@ -364,7 +459,10 @@ export default function GameBoard({ state, actions, dispatch }) {
   )
 }
 
-// Tab button
+// ============================================
+// SUB-COMPONENTS
+// ============================================
+
 function TabButton({ label, active, disabled, badge, onClick }) {
   return (
     <button
@@ -372,9 +470,9 @@ function TabButton({ label, active, disabled, badge, onClick }) {
       disabled={disabled}
       className={`
         flex-1 px-3 py-2.5 text-xs font-display uppercase tracking-wider
-        relative
+        relative transition-colors
         ${disabled 
-          ? 'text-steel-light/20'
+          ? 'text-steel-light/20 cursor-not-allowed' 
           : active 
             ? 'text-continuity bg-continuity/20 border-b-2 border-continuity' 
             : 'text-steel-light/60 active:bg-steel/20'
@@ -383,8 +481,93 @@ function TabButton({ label, active, disabled, badge, onClick }) {
     >
       {label}
       {badge && !disabled && (
-        <span className="absolute top-1 right-1 w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+        <span className={`absolute top-1 right-2 text-xs ${
+          badge === '!' ? 'text-green-400 animate-pulse' : 'text-continuity'
+        }`}>
+          {badge}
+        </span>
       )}
     </button>
+  )
+}
+
+function InfoPanel({ hex, units, playerFaction }) {
+  if (!hex) {
+    return (
+      <div className="text-center text-steel-light/50 py-4">
+        <p className="text-sm">No hex selected</p>
+        <p className="text-xs mt-1">Tap a hex on the map to see details</p>
+      </div>
+    )
+  }
+  
+  const owner = hex.owner ? FACTIONS[hex.owner] : null
+  const isOwned = hex.owner === playerFaction
+  
+  return (
+    <div className="space-y-3">
+      {/* Hex info */}
+      <div>
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-display text-steel-bright capitalize">{hex.terrain}</span>
+          {owner && (
+            <span className="text-xs px-2 py-0.5 rounded" style={{ 
+              backgroundColor: owner.color + '30',
+              color: owner.color 
+            }}>
+              {isOwned ? 'Your Territory' : owner.name}
+            </span>
+          )}
+        </div>
+        {hex.resources && (
+          <div className="flex gap-3 mt-1 text-xs font-mono">
+            {hex.resources.gold > 0 && <span className="text-yellow-400">+{hex.resources.gold} gold</span>}
+            {hex.resources.iron > 0 && <span className="text-steel-light">+{hex.resources.iron} iron</span>}
+            {hex.resources.grain > 0 && <span className="text-green-400">+{hex.resources.grain} grain</span>}
+          </div>
+        )}
+      </div>
+      
+      {/* Buildings */}
+      {hex.buildings?.length > 0 && (
+        <div>
+          <div className="text-xs text-steel-light/50 mb-1">Buildings:</div>
+          <div className="flex flex-wrap gap-1">
+            {hex.buildings.map((b, i) => (
+              <span key={i} className="text-xs bg-steel/30 px-2 py-0.5 rounded capitalize">
+                {BUILDINGS[b]?.name || b}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      
+      {/* Units */}
+      {units.length > 0 && (
+        <div>
+          <div className="text-xs text-steel-light/50 mb-1">Units:</div>
+          <div className="space-y-1">
+            {units.map(unit => {
+              const unitDef = UNITS[unit.type]
+              const isPlayer = unit.owner === playerFaction
+              return (
+                <div 
+                  key={unit.id}
+                  className={`flex items-center justify-between text-xs p-1.5 rounded ${
+                    isPlayer ? 'bg-continuity/20' : 'bg-danger/20'
+                  }`}
+                >
+                  <span className="font-medium">{unitDef?.name || unit.type}</span>
+                  <span className="text-steel-light/70">
+                    ATK:{unit.stats?.attack || unitDef?.stats.attack} / 
+                    DEF:{unit.stats?.defense || unitDef?.stats.defense}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
