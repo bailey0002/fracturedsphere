@@ -1,6 +1,6 @@
-// Individual hex tile component with iOS touch support
+// Individual hex tile - uses pointer events for universal touch/mouse support
 
-import { memo, useMemo, useCallback, useRef } from 'react'
+import { memo, useMemo, useCallback } from 'react'
 import { axialToPixel, getHexPath } from '../utils/hexMath'
 import { TERRAIN_TYPES } from '../data/terrain'
 import { FACTIONS } from '../data/factions'
@@ -16,14 +16,10 @@ function HexTile({
   isPlayerOwned,
   visibility,
   onClick,
-  isPanning, // Function to check if currently panning
 }) {
   const { q, r, terrain, owner, isCapital } = hex
   const terrainData = TERRAIN_TYPES[terrain] || TERRAIN_TYPES.plains
   const factionData = owner ? FACTIONS[owner] : null
-  
-  // Touch tracking for this hex
-  const touchRef = useRef({ startX: 0, startY: 0, moved: false })
   
   // Calculate pixel position
   const { x, y } = useMemo(() => axialToPixel(q, r, HEX_SIZE), [q, r])
@@ -34,7 +30,7 @@ function HexTile({
   // Colors
   const fillColor = useMemo(() => {
     if (owner && factionData) {
-      return factionData.color + '40' // 25% opacity faction overlay
+      return factionData.color + '40'
     }
     return terrainData.color
   }, [terrain, owner, factionData, terrainData])
@@ -52,41 +48,13 @@ function HexTile({
   // Visibility opacity
   const opacity = visibility === 'unexplored' ? 0.6 : visibility === 'explored' ? 0.85 : 1
   
-  // Click handler (mouse)
-  const handleClick = useCallback((e) => {
+  // Universal click/tap handler using onPointerUp
+  // PointerEvents work consistently across mouse and touch
+  const handlePointerUp = useCallback((e) => {
     e.stopPropagation()
+    e.preventDefault()
     onClick?.(q, r)
   }, [onClick, q, r])
-  
-  // Touch handlers - track start position to detect tap vs drag
-  const handleTouchStart = useCallback((e) => {
-    const touch = e.touches[0]
-    touchRef.current = {
-      startX: touch.clientX,
-      startY: touch.clientY,
-      moved: false,
-    }
-  }, [])
-  
-  const handleTouchMove = useCallback((e) => {
-    const touch = e.touches[0]
-    const dx = Math.abs(touch.clientX - touchRef.current.startX)
-    const dy = Math.abs(touch.clientY - touchRef.current.startY)
-    
-    // If moved more than 10px, mark as moved (not a tap)
-    if (dx > 10 || dy > 10) {
-      touchRef.current.moved = true
-    }
-  }, [])
-  
-  const handleTouchEnd = useCallback((e) => {
-    e.stopPropagation()
-    
-    // Only trigger click if we didn't pan and parent isn't panning
-    if (!touchRef.current.moved && (!isPanning || !isPanning())) {
-      onClick?.(q, r)
-    }
-  }, [onClick, q, r, isPanning])
   
   // Unit display
   const unitDisplay = useMemo(() => {
@@ -98,7 +66,6 @@ function HexTile({
     
     return (
       <g>
-        {/* Unit circle */}
         <circle
           cx={x}
           cy={y + 8}
@@ -108,7 +75,6 @@ function HexTile({
           strokeWidth={2}
           opacity={0.9}
         />
-        {/* Unit count/strength */}
         <text
           x={x}
           y={y + 13}
@@ -126,31 +92,29 @@ function HexTile({
   return (
     <g 
       style={{ opacity, cursor: 'pointer' }}
-      onClick={handleClick}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
+      onPointerUp={handlePointerUp}
     >
-      {/* Hex shape */}
+      {/* Hex shape - main tap target */}
       <path
         d={hexPath}
         transform={`translate(${x}, ${y})`}
         fill={fillColor}
         stroke={strokeColor}
         strokeWidth={strokeWidth}
+        style={{ pointerEvents: 'all' }}
       />
       
-      {/* Valid move indicator - pulsing dashed circle */}
+      {/* Valid move indicator */}
       {isValidMove && (
         <circle
           cx={x}
           cy={y}
           r={HEX_SIZE - 10}
-          fill="none"
+          fill="rgba(85, 168, 112, 0.15)"
           stroke="#55a870"
           strokeWidth={2}
           strokeDasharray="6 4"
-          className="animate-pulse"
+          style={{ pointerEvents: 'none' }}
         />
       )}
       
@@ -164,12 +128,14 @@ function HexTile({
             fill="rgba(196, 85, 85, 0.2)"
             stroke="#c45555"
             strokeWidth={2}
+            style={{ pointerEvents: 'none' }}
           />
           <text
             x={x}
             y={y - 15}
             textAnchor="middle"
             fontSize="16"
+            style={{ pointerEvents: 'none' }}
           >
             ⚔️
           </text>
@@ -183,6 +149,7 @@ function HexTile({
         textAnchor="middle"
         fontSize="14"
         opacity={0.7}
+        style={{ pointerEvents: 'none' }}
       >
         {terrainData.icon}
       </text>
@@ -195,6 +162,7 @@ function HexTile({
           textAnchor="middle"
           fontSize="18"
           fill="#ffd700"
+          style={{ pointerEvents: 'none' }}
         >
           ★
         </text>
@@ -208,6 +176,7 @@ function HexTile({
           textAnchor="middle"
           fontSize="20"
           fill="rgba(138, 155, 170, 0.5)"
+          style={{ pointerEvents: 'none' }}
         >
           ?
         </text>

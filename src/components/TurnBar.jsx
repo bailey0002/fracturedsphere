@@ -1,4 +1,5 @@
-// Turn phase bar - mobile optimized
+// TurnBar - kept for desktop/larger screens
+// Mobile uses inline controls in GameBoard
 
 import { PHASES, PHASE_ORDER, getCurrentSeason } from '../hooks/useGameState'
 
@@ -26,79 +27,45 @@ export default function TurnBar({
   const season = getCurrentSeason(turn)
   
   return (
-    <div className="panel p-2 sm:p-3">
-      {/* Mobile layout: stacked */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-        
-        {/* Row 1: Turn info + Active phase (mobile) or full phase bar (desktop) */}
-        <div className="flex items-center justify-between sm:justify-start sm:gap-4">
-          {/* Turn number and season */}
-          <div className="flex items-center gap-2">
-            <div className="font-display text-base sm:text-lg text-steel-bright">
-              T{turn}
-            </div>
-            <div className="text-xs text-steel-light/70 font-mono hidden sm:block">
-              {season.name}
-            </div>
-          </div>
-          
-          {/* Mobile: Show ONLY active phase prominently */}
-          <div className="sm:hidden flex items-center gap-2 px-3 py-1 bg-continuity/30 rounded border border-continuity/50">
-            <span className="text-base">{PHASE_ICONS[phase]}</span>
-            <span className="font-display text-xs tracking-wider uppercase text-steel-bright">
-              {PHASE_LABELS[phase]}
-            </span>
-            <span className="text-xs text-steel-light/50">
-              ({phaseIndex + 1}/4)
-            </span>
-          </div>
-          
-          {/* Desktop: Full phase indicator bar */}
-          <div className="hidden sm:flex items-center gap-1">
-            {PHASE_ORDER.map((p, index) => {
-              const isActive = index === phaseIndex
-              const isCompleted = index < phaseIndex
-              
-              return (
-                <div
-                  key={p}
-                  className={`
-                    flex items-center gap-1 px-2 py-1 rounded text-xs
-                    transition-all duration-300
-                    ${isActive 
-                      ? 'bg-continuity/30 text-steel-bright border border-continuity/50' 
-                      : isCompleted 
-                        ? 'bg-steel/20 text-steel-light/50'
-                        : 'text-steel-light/30'
-                    }
-                  `}
-                >
-                  <span>{PHASE_ICONS[p]}</span>
-                  <span className="font-display tracking-wider uppercase hidden lg:inline">
-                    {PHASE_LABELS[p]}
-                  </span>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-        
-        {/* Row 2 (mobile) / inline (desktop): Action buttons */}
-        <div className="flex items-center gap-2 justify-end">
-          <button
-            onClick={onAdvancePhase}
-            className="btn-primary text-xs sm:text-sm py-1.5 px-3"
+    <div className="flex items-center justify-between gap-4 p-3 bg-void-900 border border-steel-light/20 rounded">
+      {/* Turn info */}
+      <div className="flex items-center gap-3">
+        <span className="font-display text-lg text-steel-bright">T{turn}</span>
+        <span className="text-xs text-steel-light/60">{season.name}</span>
+      </div>
+      
+      {/* Phase indicators */}
+      <div className="flex items-center gap-1">
+        {PHASE_ORDER.map((p, index) => (
+          <div
+            key={p}
+            className={`
+              px-2 py-1 rounded text-xs flex items-center gap-1
+              ${index === phaseIndex 
+                ? 'bg-continuity/30 text-continuity border border-continuity/50' 
+                : index < phaseIndex
+                  ? 'text-steel-light/40'
+                  : 'text-steel-light/20'
+              }
+            `}
           >
-            Next
-          </button>
-          
-          <button
-            onClick={onEndTurn}
-            className="btn bg-warning/20 text-warning border-warning/30 hover:bg-warning/30 text-xs sm:text-sm py-1.5 px-3"
-          >
-            End Turn
-          </button>
-        </div>
+            <span>{PHASE_ICONS[p]}</span>
+            <span className="hidden sm:inline">{PHASE_LABELS[p]}</span>
+          </div>
+        ))}
+      </div>
+      
+      {/* Controls */}
+      <div className="flex items-center gap-2">
+        <button onClick={onAdvancePhase} className="btn-primary text-xs py-1.5 px-3">
+          Next
+        </button>
+        <button 
+          onClick={onEndTurn}
+          className="btn bg-warning/20 text-warning border-warning/30 text-xs py-1.5 px-3"
+        >
+          End
+        </button>
       </div>
     </div>
   )

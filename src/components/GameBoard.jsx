@@ -1,20 +1,25 @@
-// Main game board layout - mobile optimized
+// Main game board - mobile-first vertical layout
 
 import { useMemo, useEffect, useState } from 'react'
 import HexMap from './HexMap'
-import TurnBar from './TurnBar'
-import ResourceBar from './ResourceBar'
 import HexInfoPanel from './HexInfoPanel'
 import CombatModal from './CombatModal'
 import BuildMenu from './BuildMenu'
 import TrainMenu from './TrainMenu'
 import DiplomacyPanel from './DiplomacyPanel'
-import CompanionGuide from './CompanionGuide'
-import AudioControl from './AudioControl'
 import { useAI } from '../hooks/useAI'
 import { FACTIONS } from '../data/factions'
 import { hexId } from '../utils/hexMath'
 import { getTerritoryCount } from '../data/mapData'
+import { PHASES, PHASE_ORDER } from '../hooks/useGameState'
+
+// Phase display info
+const PHASE_INFO = {
+  production: { icon: '⚙', name: 'Production', hint: 'Tap your hex to build' },
+  diplomacy: { icon: '🤝', name: 'Diplomacy', hint: 'Manage relations' },
+  movement: { icon: '→', name: 'Movement', hint: 'Tap unit, then destination' },
+  combat: { icon: '⚔', name: 'Combat', hint: 'Battles resolve' },
+}
 
 export default function GameBoard({ state, actions, dispatch }) {
   const {
@@ -37,10 +42,11 @@ export default function GameBoard({ state, actions, dispatch }) {
   
   const [aiThinking, setAiThinking] = useState(false)
   const [showDiplomacy, setShowDiplomacy] = useState(false)
-  const [mobilePanel, setMobilePanel] = useState(null) // 'info', 'build', 'train'
+  const [expandedPanel, setExpandedPanel] = useState(null) // 'info', 'build', 'train'
   
   const factionData = FACTIONS[playerFaction]
   const resources = factionResources[playerFaction]
+  const phaseInfo = PHASE_INFO[phase] || PHASE_INFO.production
   
   // AI hook
   const { processAllAI } = useAI(state, dispatch)
@@ -49,18 +55,9 @@ export default function GameBoard({ state, actions, dispatch }) {
   useEffect(() => {
     if (phase === 'movement' && !aiThinking) {
       setAiThinking(true)
-      processAllAI().then(() => {
-        setAiThinking(false)
-      })
+      processAllAI().then(() => setAiThinking(false))
     }
   }, [phase, turn])
-  
-  // Auto-show info panel when hex selected on mobile
-  useEffect(() => {
-    if (selectedHex && window.innerWidth < 768) {
-      setMobilePanel('info')
-    }
-  }, [selectedHex])
   
   // Get selected hex data
   const selectedHexData = useMemo(() => {
@@ -79,12 +76,10 @@ export default function GameBoard({ state, actions, dispatch }) {
     getTerritoryCount(mapData, playerFaction),
     [mapData, playerFaction]
   )
-  const totalHexes = Object.keys(mapData).length
   
   // Handle hex click
   const handleHexClick = (q, r) => {
     const key = hexId(q, r)
-    const clickedHex = mapData[key]
     
     // If we have a selected unit and clicked a valid move
     if (selectedUnit && validMoves.some(m => hexId(m.q, m.r) === key)) {
@@ -98,10 +93,10 @@ export default function GameBoard({ state, actions, dispatch }) {
       return
     }
     
-    // Otherwise select the hex
+    // Select the hex
     actions.selectHex(q, r)
     
-    // If there's a player unit on this hex, select it
+    // If there's a player unit, select it
     const unitOnHex = units.find(u => 
       hexId(u.q, u.r) === key && u.faction === playerFaction
     )
@@ -110,209 +105,186 @@ export default function GameBoard({ state, actions, dispatch }) {
     } else {
       actions.selectUnit(null)
     }
+    
+    // Auto-expand info panel on mobile when hex selected
+    setExpandedPanel('info')
   }
   
-  // Handle combat resolution
+  // Combat resolution
   const handleCombatResolve = (result) => {
     actions.resolveCombat(result)
   }
   
-  // Check if selected hex can build/train
+  // Check abilities
   const canBuild = selectedHexData?.owner === playerFaction && phase === 'production'
   const canTrain = selectedHexData?.owner === playerFaction && 
                    selectedHexData?.isCapital && 
                    phase === 'production'
   
   return (
-    <div className="h-screen w-screen flex flex-col bg-void-950 overflow-hidden">
+    <div className="min-h-screen bg-void-950 flex flex-col">
       
-      {/* Top bar: Resources + Turn controls */}
-      <div className="flex-shrink-0 border-b border-steel-light/20 bg-void-900">
-        {/* Faction header */}
-        <div className="flex items-center justify-between px-2 py-1 sm:px-4 sm:py-2">
+      {/* === TOP BAR: Faction + Resources === */}
+      <header className="flex-shrink-0 bg-void-900 border-b border-steel-light/20 p-2">
+        {/* Faction name and territory */}
+        <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
             <span className="text-lg" style={{ color: factionData?.color }}>
               {factionData?.emblem}
             </span>
-            <span className="font-display text-sm sm:text-base text-steel-bright tracking-wider">
+            <span className="font-display text-sm text-steel-bright">
               {factionData?.name}
             </span>
           </div>
-          
-          {/* Territory count */}
           <div className="text-xs font-mono text-steel-light">
-            <span className="text-steel-light/50">Territory: </span>
-            <span style={{ color: factionData?.color }}>{territoryCount}</span>
-            <span className="text-steel-light/50">/{totalHexes}</span>
+            T{turn} • {territoryCount}/{Object.keys(mapData).length} hexes
           </div>
-          
-          {/* Audio control */}
-          <AudioControl />
         </div>
         
         {/* Resources row */}
-        <div className="px-2 pb-1 sm:px-4 sm:pb-2">
-          <ResourceBar resources={resources} factionColor={factionData?.color} />
+        <div className="flex items-center gap-4 text-xs">
+          <span className="text-yellow-400">◈ {Math.floor(resources?.gold || 0)}</span>
+          <span className="text-slate-400">⬡ {Math.floor(resources?.iron || 0)}</span>
+          <span className="text-green-400">❋ {Math.floor(resources?.grain || 0)}</span>
+          <span className="text-purple-400">✧ {Math.floor(resources?.influence || 0)}</span>
         </div>
-        
-        {/* Turn bar - now mobile optimized */}
-        <div className="px-2 pb-2 sm:px-4">
-          <TurnBar
-            turn={turn}
-            phase={phase}
-            phaseIndex={phaseIndex}
-            onAdvancePhase={actions.advancePhase}
-            onEndTurn={actions.endTurn}
-          />
-        </div>
-      </div>
+      </header>
       
-      {/* Main content area */}
-      <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
-        
-        {/* Map - takes full width on mobile, flex-1 on desktop */}
-        <div className="flex-1 relative">
-          <HexMap
-            mapData={mapData}
-            units={units}
-            selectedHex={selectedHex}
-            validMoves={validMoves}
-            validAttacks={validAttacks}
-            playerFaction={playerFaction}
-            onHexClick={handleHexClick}
-          />
-          
-          {/* AI Thinking overlay */}
-          {aiThinking && (
-            <div className="absolute inset-0 bg-void-950/50 flex items-center justify-center z-20">
-              <div className="panel px-6 py-4 animate-pulse">
-                <span className="font-display text-sm text-steel-bright tracking-wider">
-                  AI THINKING...
-                </span>
+      {/* === PHASE BAR: Current phase + controls === */}
+      <div className="flex-shrink-0 bg-void-900/50 border-b border-steel-light/10 px-2 py-2">
+        <div className="flex items-center justify-between">
+          {/* Current phase indicator */}
+          <div className="flex items-center gap-2 px-3 py-1 bg-continuity/20 rounded border border-continuity/40">
+            <span className="text-lg">{phaseInfo.icon}</span>
+            <div>
+              <div className="font-display text-xs text-continuity tracking-wider uppercase">
+                {phaseInfo.name}
+              </div>
+              <div className="text-[10px] text-steel-light/60">
+                {phaseInfo.hint}
               </div>
             </div>
-          )}
+            <span className="text-[10px] text-steel-light/40 ml-2">
+              {phaseIndex + 1}/4
+            </span>
+          </div>
           
-          {/* Companion Guide - positioned bottom left */}
-          <CompanionGuide
-            phase={phase}
-            selectedHex={selectedHexData}
-            selectedUnit={selectedUnit}
-            validMoves={validMoves}
-            validAttacks={validAttacks}
-            units={units}
-            playerFaction={playerFaction}
+          {/* Phase controls */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={actions.advancePhase}
+              className="px-3 py-1.5 text-xs font-display uppercase tracking-wider
+                         bg-continuity/20 text-continuity border border-continuity/40 rounded
+                         active:bg-continuity/40"
+            >
+              Next
+            </button>
+            <button
+              onClick={actions.endTurn}
+              className="px-3 py-1.5 text-xs font-display uppercase tracking-wider
+                         bg-warning/20 text-warning border border-warning/40 rounded
+                         active:bg-warning/40"
+            >
+              End Turn
+            </button>
+          </div>
+        </div>
+        
+        {/* Diplomacy button during diplomacy phase */}
+        {phase === 'diplomacy' && (
+          <button
+            onClick={() => setShowDiplomacy(true)}
+            className="mt-2 w-full px-3 py-2 text-xs font-display uppercase tracking-wider
+                       bg-steel/20 text-steel-bright border border-steel-light/30 rounded
+                       active:bg-steel/40"
+          >
+            🤝 Open Diplomacy Panel
+          </button>
+        )}
+      </div>
+      
+      {/* === MAP AREA === */}
+      <div className="flex-1 min-h-0 relative">
+        <HexMap
+          mapData={mapData}
+          units={units}
+          selectedHex={selectedHex}
+          validMoves={validMoves}
+          validAttacks={validAttacks}
+          playerFaction={playerFaction}
+          onHexClick={handleHexClick}
+        />
+        
+        {/* AI Thinking overlay */}
+        {aiThinking && (
+          <div className="absolute inset-0 bg-void-950/70 flex items-center justify-center">
+            <div className="bg-void-900 border border-steel-light/30 px-6 py-3 rounded-lg">
+              <span className="font-display text-sm text-steel-bright animate-pulse">
+                AI THINKING...
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+      
+      {/* === BOTTOM PANEL: Expandable tabs === */}
+      <div className="flex-shrink-0 bg-void-900 border-t border-steel-light/20">
+        {/* Tab buttons */}
+        <div className="flex border-b border-steel-light/10">
+          <TabButton 
+            label="Info" 
+            active={expandedPanel === 'info'} 
+            onClick={() => setExpandedPanel(expandedPanel === 'info' ? null : 'info')}
+          />
+          <TabButton 
+            label="Build" 
+            active={expandedPanel === 'build'} 
+            disabled={!canBuild}
+            onClick={() => canBuild && setExpandedPanel(expandedPanel === 'build' ? null : 'build')}
+          />
+          <TabButton 
+            label="Train" 
+            active={expandedPanel === 'train'} 
+            disabled={!canTrain}
+            onClick={() => canTrain && setExpandedPanel(expandedPanel === 'train' ? null : 'train')}
           />
         </div>
         
-        {/* Desktop sidebar */}
-        <div className="hidden md:flex md:flex-col md:w-80 border-l border-steel-light/20 bg-void-900">
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            <HexInfoPanel
-              hex={selectedHexData}
-              units={unitsOnSelectedHex}
-              playerFaction={playerFaction}
-            />
-            
-            {canBuild && (
+        {/* Panel content */}
+        {expandedPanel && (
+          <div className="max-h-40 overflow-y-auto p-3">
+            {expandedPanel === 'info' && (
+              <HexInfoPanel
+                hex={selectedHexData}
+                units={unitsOnSelectedHex}
+                playerFaction={playerFaction}
+                compact
+              />
+            )}
+            {expandedPanel === 'build' && canBuild && (
               <BuildMenu
                 hex={selectedHexData}
                 resources={resources}
                 buildingQueue={buildingQueue}
                 onBuild={actions.startBuilding}
+                compact
               />
             )}
-            
-            {canTrain && (
+            {expandedPanel === 'train' && canTrain && (
               <TrainMenu
                 hex={selectedHexData}
                 resources={resources}
                 trainingQueue={trainingQueue}
                 faction={playerFaction}
                 onTrain={actions.startTraining}
+                compact
               />
             )}
           </div>
-          
-          {/* Desktop diplomacy button */}
-          {phase === 'diplomacy' && (
-            <div className="p-4 border-t border-steel-light/20">
-              <button
-                onClick={() => setShowDiplomacy(true)}
-                className="btn-primary w-full"
-              >
-                Open Diplomacy
-              </button>
-            </div>
-          )}
-        </div>
-        
-        {/* Mobile bottom tabs */}
-        <div className="md:hidden absolute bottom-0 left-0 right-0 bg-void-900 border-t border-steel-light/20">
-          {/* Tab bar */}
-          <div className="flex border-b border-steel-light/10">
-            <MobileTab 
-              label="Info" 
-              active={mobilePanel === 'info'} 
-              onClick={() => setMobilePanel(mobilePanel === 'info' ? null : 'info')}
-            />
-            <MobileTab 
-              label="Build" 
-              active={mobilePanel === 'build'} 
-              disabled={!canBuild}
-              onClick={() => canBuild && setMobilePanel(mobilePanel === 'build' ? null : 'build')}
-            />
-            <MobileTab 
-              label="Train" 
-              active={mobilePanel === 'train'} 
-              disabled={!canTrain}
-              onClick={() => canTrain && setMobilePanel(mobilePanel === 'train' ? null : 'train')}
-            />
-            {phase === 'diplomacy' && (
-              <MobileTab 
-                label="Diplomacy" 
-                active={false} 
-                onClick={() => setShowDiplomacy(true)}
-              />
-            )}
-          </div>
-          
-          {/* Expandable panel content */}
-          {mobilePanel && (
-            <div className="max-h-48 overflow-y-auto p-3">
-              {mobilePanel === 'info' && (
-                <HexInfoPanel
-                  hex={selectedHexData}
-                  units={unitsOnSelectedHex}
-                  playerFaction={playerFaction}
-                  compact
-                />
-              )}
-              {mobilePanel === 'build' && (
-                <BuildMenu
-                  hex={selectedHexData}
-                  resources={resources}
-                  buildingQueue={buildingQueue}
-                  onBuild={actions.startBuilding}
-                  compact
-                />
-              )}
-              {mobilePanel === 'train' && (
-                <TrainMenu
-                  hex={selectedHexData}
-                  resources={resources}
-                  trainingQueue={trainingQueue}
-                  faction={playerFaction}
-                  onTrain={actions.startTraining}
-                  compact
-                />
-              )}
-            </div>
-          )}
-        </div>
+        )}
       </div>
       
-      {/* Combat Modal */}
+      {/* === MODALS === */}
       {pendingCombat && (
         <CombatModal
           attacker={pendingCombat.attacker}
@@ -325,7 +297,6 @@ export default function GameBoard({ state, actions, dispatch }) {
         />
       )}
       
-      {/* Diplomacy Panel */}
       {showDiplomacy && (
         <DiplomacyPanel
           playerFaction={playerFaction}
@@ -336,29 +307,24 @@ export default function GameBoard({ state, actions, dispatch }) {
           onClose={() => setShowDiplomacy(false)}
         />
       )}
-      
-      {/* Version */}
-      <div className="absolute bottom-16 md:bottom-2 right-2 text-xs font-mono text-steel-light/20 pointer-events-none">
-        v0.3.2
-      </div>
     </div>
   )
 }
 
-// Mobile tab button component
-function MobileTab({ label, active, disabled, onClick }) {
+// Tab button component
+function TabButton({ label, active, disabled, onClick }) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
       className={`
-        flex-1 px-2 py-2 text-xs font-display uppercase tracking-wider
+        flex-1 px-3 py-2.5 text-xs font-display uppercase tracking-wider
         transition-colors
         ${disabled 
           ? 'text-steel-light/20 cursor-not-allowed'
           : active 
             ? 'text-continuity bg-continuity/20 border-b-2 border-continuity' 
-            : 'text-steel-light/60 hover:text-steel-light active:bg-steel/10'
+            : 'text-steel-light/60 active:bg-steel/20'
         }
       `}
     >
