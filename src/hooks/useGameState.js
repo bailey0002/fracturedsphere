@@ -1,9 +1,11 @@
-// Core game state management for The Fractured Sphere
+// useGameState.js - Complete game state management
+// Includes building queue, training queue, combat, and diplomacy
 
-import { useReducer, useCallback, useEffect, useRef } from 'react'
+import { useReducer, useCallback, useMemo } from 'react'
 import { generateMapData, STARTING_RESOURCES, getCurrentSeason, FACTION_STARTS } from '../data/mapData'
 import { FACTIONS } from '../data/factions'
 import { UNITS } from '../data/units'
+import { BUILDINGS } from '../data/terrain'
 import { hexId, getHexNeighbors, hexDistance } from '../utils/hexMath'
 
 // Turn phases
@@ -19,41 +21,37 @@ export const PHASE_ORDER = ['production', 'diplomacy', 'movement', 'combat']
 // Action types
 const ACTIONS = {
   START_GAME: 'START_GAME',
-  SET_PLAYER_FACTION: 'SET_PLAYER_FACTION',
   ADVANCE_PHASE: 'ADVANCE_PHASE',
   END_TURN: 'END_TURN',
   SELECT_HEX: 'SELECT_HEX',
-  SELECT_UNIT: 'SELECT_UNIT',
   MOVE_UNIT: 'MOVE_UNIT',
-  ATTACK: 'ATTACK',
-  BUILD_UNIT: 'BUILD_UNIT',
-  BUILD_STRUCTURE: 'BUILD_STRUCTURE',
-  CAPTURE_HEX: 'CAPTURE_HEX',
-  UPDATE_RESOURCES: 'UPDATE_RESOURCES',
-  UPDATE_DIPLOMACY: 'UPDATE_DIPLOMACY',
-  ADD_NOTIFICATION: 'ADD_NOTIFICATION',
-  DISMISS_NOTIFICATION: 'DISMISS_NOTIFICATION',
-  SET_COMBAT_PREVIEW: 'SET_COMBAT_PREVIEW',
-  RESOLVE_COMBAT: 'RESOLVE_COMBAT',
   CLEAR_SELECTION: 'CLEAR_SELECTION',
+  // Building & Training
   START_BUILDING: 'START_BUILDING',
-  CANCEL_BUILDING: 'CANCEL_BUILDING',
   START_TRAINING: 'START_TRAINING',
+  CANCEL_BUILDING: 'CANCEL_BUILDING',
   CANCEL_TRAINING: 'CANCEL_TRAINING',
+  // Combat
+  INITIATE_ATTACK: 'INITIATE_ATTACK',
+  RESOLVE_COMBAT: 'RESOLVE_COMBAT',
+  CANCEL_COMBAT: 'CANCEL_COMBAT',
+  // Diplomacy
   DIPLOMATIC_ACTION: 'DIPLOMATIC_ACTION',
 }
 
-// Generate initial unit ID
+// Generate unique IDs
 let unitIdCounter = 0
-const generateUnitId = () => `unit_${++unitIdCounter}`
+const generateUnitId = () => `unit_${++unitIdCounter}_${Date.now()}`
 
 // Create initial units for a faction
 function createStartingUnits(factionId) {
   const faction = FACTIONS[factionId]
   const startPos = FACTION_STARTS[factionId]
+  if (!faction || !startPos) return []
   
-  return faction.startingUnits.map((unitType, index) => {
+  return (faction.startingUnits || ['infantry', 'infantry']).map(unitType => {
     const unitDef = UNITS[unitType]
+    if (!unitDef) return null
     return {
       id: generateUnitId(),
       type: unitType,
@@ -67,55 +65,33 @@ function createStartingUnits(factionId) {
       attackedThisTurn: false,
       health: 100,
     }
-  })
+  }).filter(Boolean)
 }
 
 // Create initial game state
 function createInitialState() {
   return {
-    // Game status
     gameStarted: false,
     gameOver: false,
     winner: null,
-    
-    // Player info
     playerFaction: null,
-    
-    // Turn tracking
     turn: 1,
     phase: PHASES.PRODUCTION,
     phaseIndex: 0,
-    
-    // Map data
     mapData: {},
-    
-    // Units by faction
     units: [],
-    
-    // Resources by faction
     factionResources: {},
-    
-    // Diplomacy
-    relations: {}, // { factionId: { otherFactionId: 'neutral' } }
-    
-    // Selection state
+    relations: {},
     selectedHex: null,
     selectedUnit: null,
     validMoves: [],
     validAttacks: [],
-    
-    // Combat
-    combatPreview: null,
     pendingCombat: null,
-    
-    // UI state
-    notifications: [],
-    showDiplomacy: false,
-    showBuildMenu: false,
-    
-    // Building and training queues
-    buildingQueue: [],  // [{ hexId, buildingType, turnsRemaining, owner }]
-    trainingQueue: [],  // [{ hexId, unitType, turnsRemaining, owner }]
+    // Queues
+    buildingQueue: [],
+    trainingQueue: [],
+    // Diplomacy
+    lastDiplomaticResult: null,
   }
 }
 
@@ -126,16 +102,11 @@ function initializeGame(state, playerFactionId) {
   const factionResources = {}
   const relations = {}
   
-  // Initialize each faction
   Object.keys(FACTIONS).forEach(factionId => {
-    // Starting resources
     factionResources[factionId] = { ...STARTING_RESOURCES }
-    
-    // Starting units
     const units = createStartingUnits(factionId)
     allUnits.push(...units)
     
-    // Initialize relations
     relations[factionId] = {}
     Object.keys(FACTIONS).forEach(otherId => {
       if (otherId !== factionId) {
@@ -160,10 +131,9 @@ function calculateValidMoves(state, unit) {
   if (!unit || unit.movedThisTurn) return []
   
   const { mapData, units } = state
-  const movement = unit.stats.movement
+  const movement = unit.stats?.movement || 2
   const validMoves = []
   
-  // BFS to find all reachable hexes
   const visited = new Set()
   const queue = [{ q: unit.q, r: unit.r, remaining: movement }]
   visited.add(hexId(unit.q, unit.r))
@@ -179,24 +149,19 @@ function calculateValidMoves(state, unit) {
       const hex = mapData[nId]
       if (!hex) continue
       
-      // Check if hex has enemy units
+      // Can't move through enemies
       const enemyUnit = units.find(u => 
-        u.q === neighbor.q && 
-        u.r === neighbor.r && 
-        u.owner !== unit.owner
+        u.q === neighbor.q && u.r === neighbor.r && u.owner !== unit.owner
       )
       if (enemyUnit) continue
       
-      // Check if hex has friendly units (can't stack)
+      // Can't stack with friendlies
       const friendlyUnit = units.find(u =>
-        u.q === neighbor.q &&
-        u.r === neighbor.r &&
-        u.owner === unit.owner &&
-        u.id !== unit.id
+        u.q === neighbor.q && u.r === neighbor.r && 
+        u.owner === unit.owner && u.id !== unit.id
       )
       if (friendlyUnit) continue
       
-      // Get terrain info (simplified - would use terrain.movementCost)
       const moveCost = 1
       
       if (current.remaining >= moveCost) {
@@ -222,10 +187,9 @@ function calculateValidAttacks(state, unit) {
   if (!unit || unit.attackedThisTurn) return []
   
   const { units } = state
-  const range = unit.stats.range || 1
+  const range = unit.stats?.range || 1
   const validAttacks = []
   
-  // Find enemy units in range
   units.forEach(target => {
     if (target.owner === unit.owner) return
     
@@ -238,73 +202,149 @@ function calculateValidAttacks(state, unit) {
   return validAttacks
 }
 
-// Production phase - collect resources
+// Process production
 function processProduction(state) {
   const { mapData, factionResources } = state
-  const season = getCurrentSeason(state.turn)
-  const newResources = { ...factionResources }
+  const season = getCurrentSeason?.(state.turn) || { effects: { grainProduction: 1 } }
+  const newResources = {}
   
   Object.keys(FACTIONS).forEach(factionId => {
-    const resources = { ...newResources[factionId] }
+    const resources = { ...(factionResources[factionId] || STARTING_RESOURCES) }
     
-    // Base income from territories
     Object.values(mapData).forEach(hex => {
       if (hex.owner === factionId) {
-        resources.gold += hex.resources.gold || 0
-        resources.iron += hex.resources.iron || 0
-        resources.grain += (hex.resources.grain || 0) * (season.effects.grainProduction || 1)
+        resources.gold += hex.resources?.gold || 0
+        resources.iron += hex.resources?.iron || 0
+        resources.grain += (hex.resources?.grain || 0) * (season.effects.grainProduction || 1)
+        
+        // Building production
+        (hex.buildings || []).forEach(buildingId => {
+          const building = BUILDINGS[buildingId]
+          if (building?.production) {
+            Object.entries(building.production).forEach(([res, amt]) => {
+              resources[res] = (resources[res] || 0) + amt
+            })
+          }
+        })
       }
     })
     
-    // Apply faction bonuses
+    // Faction bonuses
     const faction = FACTIONS[factionId]
-    if (faction.bonuses.territoryIncomeBonus) {
+    if (faction?.bonuses?.territoryIncomeBonus) {
       resources.gold *= (1 + faction.bonuses.territoryIncomeBonus)
     }
     
-    newResources[factionId] = resources
+    newResources[factionId] = {
+      gold: Math.floor(resources.gold),
+      iron: Math.floor(resources.iron),
+      grain: Math.floor(resources.grain),
+    }
   })
   
   return newResources
 }
 
+// Process building queue
+function processBuildingQueue(state) {
+  const { buildingQueue, mapData } = state
+  const completedBuildings = []
+  const remainingQueue = []
+  
+  buildingQueue.forEach(item => {
+    const remaining = item.turnsRemaining - 1
+    if (remaining <= 0) {
+      completedBuildings.push(item)
+    } else {
+      remainingQueue.push({ ...item, turnsRemaining: remaining })
+    }
+  })
+  
+  const updatedMapData = { ...mapData }
+  completedBuildings.forEach(item => {
+    const hex = updatedMapData[item.hexId]
+    if (hex) {
+      updatedMapData[item.hexId] = {
+        ...hex,
+        buildings: [...(hex.buildings || []), item.buildingType]
+      }
+    }
+  })
+  
+  return { buildingQueue: remainingQueue, mapData: updatedMapData }
+}
+
+// Process training queue
+function processTrainingQueue(state) {
+  const { trainingQueue, units } = state
+  const completedUnits = []
+  const remainingQueue = []
+  
+  trainingQueue.forEach(item => {
+    const remaining = item.turnsRemaining - 1
+    if (remaining <= 0) {
+      completedUnits.push(item)
+    } else {
+      remainingQueue.push({ ...item, turnsRemaining: remaining })
+    }
+  })
+  
+  const newUnits = [...units]
+  completedUnits.forEach(item => {
+    const [q, r] = item.hexId.split(',').map(Number)
+    const unitDef = UNITS[item.unitType]
+    if (unitDef) {
+      newUnits.push({
+        id: generateUnitId(),
+        type: item.unitType,
+        owner: item.owner,
+        q, r,
+        stats: { ...unitDef.stats },
+        experience: 0,
+        veterancy: 'green',
+        movedThisTurn: true,
+        attackedThisTurn: true,
+        health: 100,
+      })
+    }
+  })
+  
+  return { trainingQueue: remainingQueue, units: newUnits }
+}
+
 // Game reducer
 function gameReducer(state, action) {
   switch (action.type) {
-    case ACTIONS.START_GAME: {
+    case ACTIONS.START_GAME:
       return initializeGame(state, action.factionId)
-    }
-    
-    case ACTIONS.SET_PLAYER_FACTION: {
-      return { ...state, playerFaction: action.factionId }
-    }
     
     case ACTIONS.ADVANCE_PHASE: {
       const nextPhaseIndex = (state.phaseIndex + 1) % PHASE_ORDER.length
-      const nextPhase = PHASE_ORDER[nextPhaseIndex]
-      
-      // If wrapping to production, it's a new turn
       if (nextPhaseIndex === 0) {
         return gameReducer(state, { type: ACTIONS.END_TURN })
       }
-      
       return {
         ...state,
-        phase: nextPhase,
+        phase: PHASE_ORDER[nextPhaseIndex],
         phaseIndex: nextPhaseIndex,
       }
     }
     
     case ACTIONS.END_TURN: {
-      // Reset unit movement/attack flags
-      const resetUnits = state.units.map(u => ({
+      const buildingResult = processBuildingQueue(state)
+      const trainingResult = processTrainingQueue({ ...state, ...buildingResult })
+      
+      const resetUnits = trainingResult.units.map(u => ({
         ...u,
         movedThisTurn: false,
         attackedThisTurn: false,
       }))
       
-      // Process production for new turn
-      const newResources = processProduction({ ...state, units: resetUnits })
+      const newResources = processProduction({ 
+        ...state, 
+        units: resetUnits,
+        mapData: buildingResult.mapData 
+      })
       
       return {
         ...state,
@@ -313,6 +353,9 @@ function gameReducer(state, action) {
         phaseIndex: 0,
         units: resetUnits,
         factionResources: newResources,
+        mapData: buildingResult.mapData,
+        buildingQueue: buildingResult.buildingQueue,
+        trainingQueue: trainingResult.trainingQueue,
         selectedHex: null,
         selectedUnit: null,
         validMoves: [],
@@ -324,23 +367,15 @@ function gameReducer(state, action) {
       const { q, r } = action
       const hexKey = hexId(q, r)
       
-      // If clicking same hex, deselect
       if (state.selectedHex === hexKey) {
-        return {
-          ...state,
-          selectedHex: null,
-          selectedUnit: null,
-          validMoves: [],
-          validAttacks: [],
-        }
+        return { ...state, selectedHex: null, selectedUnit: null, validMoves: [], validAttacks: [] }
       }
       
-      // Check if there's a unit on this hex owned by player
       const unitOnHex = state.units.find(
         u => u.q === q && u.r === r && u.owner === state.playerFaction
       )
       
-      if (unitOnHex && state.phase === PHASES.MOVEMENT) {
+      if (unitOnHex && (state.phase === PHASES.MOVEMENT || state.phase === PHASES.COMBAT)) {
         const validMoves = calculateValidMoves(state, unitOnHex)
         const validAttacks = calculateValidAttacks(state, unitOnHex)
         
@@ -353,29 +388,7 @@ function gameReducer(state, action) {
         }
       }
       
-      return {
-        ...state,
-        selectedHex: hexKey,
-        selectedUnit: null,
-        validMoves: [],
-        validAttacks: [],
-      }
-    }
-    
-    case ACTIONS.SELECT_UNIT: {
-      const unit = state.units.find(u => u.id === action.unitId)
-      if (!unit || unit.owner !== state.playerFaction) return state
-      
-      const validMoves = calculateValidMoves(state, unit)
-      const validAttacks = calculateValidAttacks(state, unit)
-      
-      return {
-        ...state,
-        selectedHex: hexId(unit.q, unit.r),
-        selectedUnit: unit.id,
-        validMoves,
-        validAttacks,
-      }
+      return { ...state, selectedHex: hexKey, selectedUnit: null, validMoves: [], validAttacks: [] }
     }
     
     case ACTIONS.MOVE_UNIT: {
@@ -383,7 +396,6 @@ function gameReducer(state, action) {
       const unit = state.units.find(u => u.id === unitId)
       if (!unit) return state
       
-      // Verify move is valid
       const isValid = state.validMoves.some(m => m.q === toQ && m.r === toR)
       if (!isValid) return state
       
@@ -394,12 +406,11 @@ function gameReducer(state, action) {
         return u
       })
       
-      // Check if capturing enemy territory
+      // Capture territory
       const targetHex = state.mapData[hexId(toQ, toR)]
       let updatedMapData = state.mapData
       
-      if (targetHex && targetHex.owner !== unit.owner && targetHex.owner !== null) {
-        // Capture hex if no defenders
+      if (targetHex && targetHex.owner !== unit.owner) {
         const defenders = state.units.filter(
           u => u.q === toQ && u.r === toR && u.owner === targetHex.owner
         )
@@ -407,15 +418,11 @@ function gameReducer(state, action) {
         if (defenders.length === 0) {
           updatedMapData = {
             ...state.mapData,
-            [hexId(toQ, toR)]: {
-              ...targetHex,
-              owner: unit.owner,
-            },
+            [hexId(toQ, toR)]: { ...targetHex, owner: unit.owner },
           }
         }
       }
       
-      // Recalculate valid moves for the unit at new position
       const movedUnit = { ...unit, q: toQ, r: toR, movedThisTurn: true }
       const newValidAttacks = calculateValidAttacks({ ...state, units: updatedUnits }, movedUnit)
       
@@ -428,175 +435,224 @@ function gameReducer(state, action) {
       }
     }
     
-    case ACTIONS.CAPTURE_HEX: {
-      const { q, r, newOwner } = action
-      const key = hexId(q, r)
-      
-      return {
-        ...state,
-        mapData: {
-          ...state.mapData,
-          [key]: {
-            ...state.mapData[key],
-            owner: newOwner,
-          },
-        },
-      }
-    }
+    case ACTIONS.CLEAR_SELECTION:
+      return { ...state, selectedHex: null, selectedUnit: null, validMoves: [], validAttacks: [] }
     
-    case ACTIONS.CLEAR_SELECTION: {
-      return {
-        ...state,
-        selectedHex: null,
-        selectedUnit: null,
-        validMoves: [],
-        validAttacks: [],
-        combatPreview: null,
-      }
-    }
-    
-    case ACTIONS.ADD_NOTIFICATION: {
-      return {
-        ...state,
-        notifications: [
-          ...state.notifications,
-          { id: Date.now(), ...action.notification },
-        ],
-      }
-    }
-    
-    case ACTIONS.DISMISS_NOTIFICATION: {
-      return {
-        ...state,
-        notifications: state.notifications.filter(n => n.id !== action.id),
-      }
-    }
-    
-    case ACTIONS.UPDATE_RESOURCES: {
-      const { factionId, resources } = action
-      return {
-        ...state,
-        factionResources: {
-          ...state.factionResources,
-          [factionId]: {
-            ...state.factionResources[factionId],
-            ...resources,
-          },
-        },
-      }
-    }
-    
+    // ============ BUILDING ============
     case ACTIONS.START_BUILDING: {
       const { hexId: targetHexId, buildingType, owner } = action
-      
-      // Import BUILDINGS inline to avoid circular deps
-      const BUILDINGS = {
-        farm: { cost: { gold: 60, iron: 20 }, buildTime: 2 },
-        mine: { cost: { gold: 80, iron: 30 }, buildTime: 2 },
-        market: { cost: { gold: 100, iron: 40 }, buildTime: 2 },
-        fortress: { cost: { gold: 150, iron: 100 }, buildTime: 3 },
-        academy: { cost: { gold: 120, iron: 60 }, buildTime: 3 },
-        port: { cost: { gold: 120, iron: 60 }, buildTime: 2 },
-        relay: { cost: { gold: 80, iron: 50 }, buildTime: 1 },
-      }
-      
       const building = BUILDINGS[buildingType]
       if (!building) return state
       
-      // Check and deduct resources
       const resources = { ...state.factionResources[owner] }
-      for (const [res, amount] of Object.entries(building.cost)) {
-        if ((resources[res] || 0) < amount) return state
-        resources[res] -= amount
-      }
+      const canAfford = Object.entries(building.cost || {}).every(
+        ([res, amount]) => (resources[res] || 0) >= amount
+      )
+      if (!canAfford) return state
       
-      // Add to queue
+      // Deduct cost
+      Object.entries(building.cost || {}).forEach(([res, amount]) => {
+        resources[res] -= amount
+      })
+      
       const newQueueItem = {
         hexId: targetHexId,
         buildingType,
-        turnsRemaining: building.buildTime,
+        turnsRemaining: building.buildTime || 2,
         owner,
       }
       
       return {
         ...state,
         buildingQueue: [...state.buildingQueue, newQueueItem],
-        factionResources: {
-          ...state.factionResources,
-          [owner]: resources,
-        },
+        factionResources: { ...state.factionResources, [owner]: resources },
       }
     }
     
+    case ACTIONS.CANCEL_BUILDING: {
+      const { hexId: targetHexId, buildingType, owner } = action
+      const building = BUILDINGS[buildingType]
+      
+      const queueIndex = state.buildingQueue.findIndex(
+        item => item.hexId === targetHexId && item.buildingType === buildingType && item.owner === owner
+      )
+      if (queueIndex === -1) return state
+      
+      // Refund 50%
+      const resources = { ...state.factionResources[owner] }
+      if (building) {
+        Object.entries(building.cost || {}).forEach(([res, amount]) => {
+          resources[res] = (resources[res] || 0) + Math.floor(amount * 0.5)
+        })
+      }
+      
+      const newQueue = [...state.buildingQueue]
+      newQueue.splice(queueIndex, 1)
+      
+      return {
+        ...state,
+        buildingQueue: newQueue,
+        factionResources: { ...state.factionResources, [owner]: resources },
+      }
+    }
+    
+    // ============ TRAINING ============
     case ACTIONS.START_TRAINING: {
       const { hexId: targetHexId, unitType, owner } = action
-      
-      // Basic unit costs
-      const UNIT_COSTS = {
-        infantry: { cost: { gold: 30, grain: 10 }, trainTime: 1 },
-        garrison: { cost: { gold: 40, grain: 15 }, trainTime: 1 },
-        cavalry: { cost: { gold: 60, grain: 20 }, trainTime: 2 },
-        armor: { cost: { gold: 100, iron: 50, grain: 20 }, trainTime: 3 },
-        artillery: { cost: { gold: 80, iron: 40, grain: 15 }, trainTime: 2 },
-        elite: { cost: { gold: 120, iron: 30, grain: 25 }, trainTime: 3 },
-      }
-      
-      const unit = UNIT_COSTS[unitType]
+      const unit = UNITS[unitType]
       if (!unit) return state
       
-      // Check and deduct resources
       const resources = { ...state.factionResources[owner] }
-      for (const [res, amount] of Object.entries(unit.cost)) {
-        if ((resources[res] || 0) < amount) return state
+      const canAfford = Object.entries(unit.cost || {}).every(
+        ([res, amount]) => (resources[res] || 0) >= amount
+      )
+      if (!canAfford) return state
+      
+      // Check queue limit (3 per hex)
+      const hexQueueCount = state.trainingQueue.filter(q => q.hexId === targetHexId).length
+      if (hexQueueCount >= 3) return state
+      
+      // Deduct cost
+      Object.entries(unit.cost || {}).forEach(([res, amount]) => {
         resources[res] -= amount
+      })
+      
+      // Academy reduces train time
+      const hex = state.mapData[targetHexId]
+      let trainTime = unit.trainTime || 1
+      if (hex?.buildings?.includes('academy')) {
+        trainTime = Math.max(1, Math.ceil(trainTime * 0.75))
       }
       
-      // Add to queue
       const newQueueItem = {
         hexId: targetHexId,
         unitType,
-        turnsRemaining: unit.trainTime,
+        turnsRemaining: trainTime,
         owner,
       }
       
       return {
         ...state,
         trainingQueue: [...state.trainingQueue, newQueueItem],
-        factionResources: {
-          ...state.factionResources,
-          [owner]: resources,
+        factionResources: { ...state.factionResources, [owner]: resources },
+      }
+    }
+    
+    case ACTIONS.CANCEL_TRAINING: {
+      const { hexId: targetHexId, unitType, owner } = action
+      const unit = UNITS[unitType]
+      
+      const queueIndex = state.trainingQueue.findIndex(
+        item => item.hexId === targetHexId && item.unitType === unitType && item.owner === owner
+      )
+      if (queueIndex === -1) return state
+      
+      // Refund 50%
+      const resources = { ...state.factionResources[owner] }
+      if (unit) {
+        Object.entries(unit.cost || {}).forEach(([res, amount]) => {
+          resources[res] = (resources[res] || 0) + Math.floor(amount * 0.5)
+        })
+      }
+      
+      const newQueue = [...state.trainingQueue]
+      newQueue.splice(queueIndex, 1)
+      
+      return {
+        ...state,
+        trainingQueue: newQueue,
+        factionResources: { ...state.factionResources, [owner]: resources },
+      }
+    }
+    
+    // ============ COMBAT ============
+    case ACTIONS.INITIATE_ATTACK: {
+      const { attackerId, defenderId } = action
+      const attacker = state.units.find(u => u.id === attackerId)
+      const defender = state.units.find(u => u.id === defenderId)
+      
+      if (!attacker || !defender) return state
+      
+      const defenderHex = state.mapData[hexId(defender.q, defender.r)]
+      
+      return {
+        ...state,
+        pendingCombat: {
+          attacker,
+          defender,
+          terrain: defenderHex?.terrain || 'plains',
+          hexBuildings: defenderHex?.buildings || [],
         },
       }
     }
     
-    case ACTIONS.DIPLOMATIC_ACTION: {
-      const { targetFaction, actionType, playerFaction } = action
-      // Simplified diplomacy - just update relations
-      const currentRelation = state.relations[playerFaction]?.[targetFaction] || 'neutral'
+    case ACTIONS.RESOLVE_COMBAT: {
+      const { result } = action
+      if (!state.pendingCombat) return state
       
-      let newRelation = currentRelation
-      if (actionType === 'IMPROVE_RELATIONS') {
-        const order = ['war', 'hostile', 'unfriendly', 'neutral', 'cordial', 'friendly', 'allied']
-        const idx = order.indexOf(currentRelation)
-        if (idx < order.length - 1) newRelation = order[idx + 1]
-      } else if (actionType === 'DECLARE_WAR') {
-        newRelation = 'war'
+      const { attacker, defender } = state.pendingCombat
+      
+      let updatedUnits = state.units.map(u => {
+        if (u.id === attacker.id) {
+          return { ...u, attackedThisTurn: true, health: result.attackerHealth || u.health }
+        }
+        if (u.id === defender.id) {
+          return { ...u, health: result.defenderHealth || u.health }
+        }
+        return u
+      })
+      
+      // Remove dead units
+      if (result.attackerDestroyed) {
+        updatedUnits = updatedUnits.filter(u => u.id !== attacker.id)
+      }
+      if (result.defenderDestroyed) {
+        updatedUnits = updatedUnits.filter(u => u.id !== defender.id)
       }
       
       return {
         ...state,
-        relations: {
-          ...state.relations,
-          [playerFaction]: {
-            ...state.relations[playerFaction],
-            [targetFaction]: newRelation,
-          },
-          [targetFaction]: {
-            ...state.relations[targetFaction],
-            [playerFaction]: newRelation,
-          },
-        },
-        lastDiplomaticResult: { success: true, message: `Relations changed to ${newRelation}` },
+        units: updatedUnits,
+        pendingCombat: null,
+        validAttacks: [],
+      }
+    }
+    
+    case ACTIONS.CANCEL_COMBAT:
+      return { ...state, pendingCombat: null }
+    
+    // ============ DIPLOMACY ============
+    case ACTIONS.DIPLOMATIC_ACTION: {
+      const { targetFaction, actionType } = action
+      const { playerFaction, relations, factionResources } = state
+      
+      const newRelations = { ...relations }
+      let result = { success: false, message: '' }
+      
+      // Simplified diplomacy
+      if (actionType === 'improve') {
+        const current = relations[playerFaction]?.[targetFaction] || 'neutral'
+        if (current === 'hostile') {
+          newRelations[playerFaction] = { ...newRelations[playerFaction], [targetFaction]: 'neutral' }
+          newRelations[targetFaction] = { ...newRelations[targetFaction], [playerFaction]: 'neutral' }
+          result = { success: true, message: 'Relations improved to neutral' }
+        } else if (current === 'neutral') {
+          newRelations[playerFaction] = { ...newRelations[playerFaction], [targetFaction]: 'friendly' }
+          newRelations[targetFaction] = { ...newRelations[targetFaction], [playerFaction]: 'friendly' }
+          result = { success: true, message: 'Relations improved to friendly' }
+        } else {
+          result = { success: false, message: 'Relations already at maximum' }
+        }
+      } else if (actionType === 'declare_war') {
+        newRelations[playerFaction] = { ...newRelations[playerFaction], [targetFaction]: 'hostile' }
+        newRelations[targetFaction] = { ...newRelations[targetFaction], [playerFaction]: 'hostile' }
+        result = { success: true, message: 'War declared!' }
+      }
+      
+      return {
+        ...state,
+        relations: newRelations,
+        lastDiplomaticResult: result,
       }
     }
     
@@ -605,96 +661,93 @@ function gameReducer(state, action) {
   }
 }
 
-// Custom hook for game state
+// ============ HOOK ============
 export function useGameState() {
   const [state, dispatch] = useReducer(gameReducer, null, createInitialState)
   
-  // Start game with selected faction
   const startGame = useCallback((factionId) => {
     dispatch({ type: ACTIONS.START_GAME, factionId })
   }, [])
   
-  // Select a hex on the map
   const selectHex = useCallback((q, r) => {
     dispatch({ type: ACTIONS.SELECT_HEX, q, r })
   }, [])
   
-  // Select a specific unit
-  const selectUnit = useCallback((unitId) => {
-    dispatch({ type: ACTIONS.SELECT_UNIT, unitId })
-  }, [])
-  
-  // Move selected unit
   const moveUnit = useCallback((toQ, toR) => {
     if (!state.selectedUnit) return
     dispatch({ type: ACTIONS.MOVE_UNIT, unitId: state.selectedUnit, toQ, toR })
   }, [state.selectedUnit])
   
-  // Advance to next phase
   const advancePhase = useCallback(() => {
     dispatch({ type: ACTIONS.ADVANCE_PHASE })
   }, [])
   
-  // End turn (skip remaining phases)
   const endTurn = useCallback(() => {
     dispatch({ type: ACTIONS.END_TURN })
   }, [])
   
-  // Clear selection
   const clearSelection = useCallback(() => {
     dispatch({ type: ACTIONS.CLEAR_SELECTION })
   }, [])
   
-  // Add notification
-  const addNotification = useCallback((notification) => {
-    dispatch({ type: ACTIONS.ADD_NOTIFICATION, notification })
-    
-    // Auto-dismiss after duration
-    if (notification.duration) {
-      setTimeout(() => {
-        dispatch({ type: ACTIONS.DISMISS_NOTIFICATION, id: Date.now() })
-      }, notification.duration)
-    }
-  }, [])
-  
-  // Dismiss notification
-  const dismissNotification = useCallback((id) => {
-    dispatch({ type: ACTIONS.DISMISS_NOTIFICATION, id })
-  }, [])
-  
-  // Building actions
+  // Building
   const startBuilding = useCallback((hexId, buildingType, owner) => {
     dispatch({ type: ACTIONS.START_BUILDING, hexId, buildingType, owner })
   }, [])
   
-  // Training actions  
+  const cancelBuilding = useCallback((hexId, buildingType, owner) => {
+    dispatch({ type: ACTIONS.CANCEL_BUILDING, hexId, buildingType, owner })
+  }, [])
+  
+  // Training
   const startTraining = useCallback((hexId, unitType, owner) => {
     dispatch({ type: ACTIONS.START_TRAINING, hexId, unitType, owner })
   }, [])
   
-  // Diplomacy actions
-  const performDiplomaticAction = useCallback((targetFaction, actionType) => {
-    dispatch({ type: ACTIONS.DIPLOMATIC_ACTION, targetFaction, actionType, playerFaction: state.playerFaction })
-    return { success: true, message: 'Diplomatic action performed' }
-  }, [state.playerFaction])
+  const cancelTraining = useCallback((hexId, unitType, owner) => {
+    dispatch({ type: ACTIONS.CANCEL_TRAINING, hexId, unitType, owner })
+  }, [])
   
-  return {
-    state,
-    actions: {
-      startGame,
-      selectHex,
-      selectUnit,
-      moveUnit,
-      advancePhase,
-      endTurn,
-      clearSelection,
-      addNotification,
-      dismissNotification,
-      startBuilding,
-      startTraining,
-      performDiplomaticAction,
-    },
-  }
+  // Combat
+  const initiateAttack = useCallback((attackerId, defenderId) => {
+    dispatch({ type: ACTIONS.INITIATE_ATTACK, attackerId, defenderId })
+  }, [])
+  
+  const resolveCombat = useCallback((result) => {
+    dispatch({ type: ACTIONS.RESOLVE_COMBAT, result })
+  }, [])
+  
+  const cancelCombat = useCallback(() => {
+    dispatch({ type: ACTIONS.CANCEL_COMBAT })
+  }, [])
+  
+  // Diplomacy
+  const performDiplomaticAction = useCallback((targetFaction, actionType) => {
+    dispatch({ type: ACTIONS.DIPLOMATIC_ACTION, targetFaction, actionType })
+  }, [])
+  
+  const actions = useMemo(() => ({
+    startGame,
+    selectHex,
+    moveUnit,
+    advancePhase,
+    endTurn,
+    clearSelection,
+    startBuilding,
+    cancelBuilding,
+    startTraining,
+    cancelTraining,
+    initiateAttack,
+    resolveCombat,
+    cancelCombat,
+    performDiplomaticAction,
+  }), [
+    startGame, selectHex, moveUnit, advancePhase, endTurn, clearSelection,
+    startBuilding, cancelBuilding, startTraining, cancelTraining,
+    initiateAttack, resolveCombat, cancelCombat, performDiplomaticAction
+  ])
+  
+  return { state, actions, dispatch }
 }
 
 export { ACTIONS }
